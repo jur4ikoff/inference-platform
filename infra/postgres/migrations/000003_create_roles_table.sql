@@ -1,0 +1,7 @@
+-- CREATE TABLE IF NOT EXISTS roles (
+--     id INTEGER PRIMARY KEY,
+--     created_at TIMESTAMPTZ NOT NULL,
+--     updated_at TIMESTAMPTZ NOT NULL,
+--     name TEXT NOT NULL UNIQUE,
+--     all_permissions BOOLEAN NOT NULL DEFAULT FALSE
+-- );

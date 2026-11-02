@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package inference.v1;
+
+option go_package = "github.com/jur4ikoff/internal-api/gen/go/inference/v1;inferencev1";
+
+service InferenceService {
+  rpc StartDeployment(StartDeploymentRequest) returns (StartDeploymentResponse);
+  rpc StopDeployment(StopDeploymentRequest) returns (StopDeploymentResponse);
+  rpc GetDeploymentByID(GetDeploymentByIDRequest) returns (GetDeploymentByIDResponse);
+  rpc GetDeploymentByName(GetDeploymentByNameRequest) returns (GetDeploymentByNameResponse);
+  rpc ListDeployments(ListDeploymentsRequest) returns (ListDeploymentsResponse);
+  rpc ListAllDeployments(ListAllDeploymentsRequest) returns (ListAllDeploymentsResponse);
+}
+
+enum ModelStatus {
+  MODEL_STATUS_UNSPECIFIED = 0;
+  MODEL_STATUS_RUNNING = 1;
+  MODEL_STATUS_STOPPED = 2;
+  MODEL_STATUS_STARTED = 3;
+  MODEL_STATUS_STOPPING = 4;
+  MODEL_STATUS_PENDING = 5;
+  MODEL_STATUS_STARTING = 6;
+  MODEL_STATUS_FAILED = 7;
+  MODEL_STATUS_UNKNOWN = 8;
+}
+
+message ModelState {
+  string model_id = 1;
+  string project = 2;
+  string deployment_name = 3;
+  ModelStatus status = 4;
+  string deployment_id = 5;
+}
+
+message Deployment {
+  string deployment_id = 1;
+  string container_id = 2;
+  string model_id = 3;
+  string project = 4;
+  string username = 5;
+  string name = 6;
+  string deployment_name = 7;
+  ModelStatus status = 8;
+  DeploymentSpec spec = 9;
+}
+
+message StartDeploymentRequest {
+  reserved 5;
+
+  string project = 1;
+  string model_id = 2;
+  string user_id = 3;
+  string deployment_name = 4;
+  DeploymentSpec spec = 6;
+}
+
+message DeploymentSpec {
+  string provider_type = 1;
+  HuggingFaceProvider provider_hugging_face = 2;
+}
+
+message HuggingFaceProvider {
+  string repo = 1;
+}
+
+message StartDeploymentResponse {
+  ModelState state = 1;
+}
+
+message StopDeploymentRequest {
+  string deployment_id = 1;
+}
+
+message StopDeploymentResponse {}
+
+message GetDeploymentByIDRequest {
+  string deployment_id = 1;
+}
+
+message GetDeploymentByIDResponse {
+  Deployment deployment = 1;
+}
+
+message GetDeploymentByNameRequest {
+  string name = 1;
+}
+
+message GetDeploymentByNameResponse {
+  Deployment deployment = 1;
+}
+
+message ListDeploymentsRequest {
+  int32 offset = 1;
+  int32 limit = 2;
+  string next_page_token = 3;
+}
+
+message ListDeploymentsResponse {
+  repeated Deployment deployments = 1;
+  string next_page_token = 2;
+}
+
+message ListAllDeploymentsRequest {
+  int32 offset = 1;
+  int32 limit = 2;
+  string next_page_token = 3;
+}
+
+message ListAllDeploymentsResponse {
+  repeated Deployment deployments = 1;
+  string next_page_token = 2;
+}
