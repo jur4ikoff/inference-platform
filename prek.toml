@@ -1,0 +1,63 @@
+minimum_prek_version = "0.4.13"
+default_stages = ["manual"]
+
+[[repos]]
+repo = "builtin"
+hooks = [
+    { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"] },
+    { id = "end-of-file-fixer" },
+    { id = "check-merge-conflict" },
+    { id = "check-yaml" },
+    { id = "check-toml" },
+]
+
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "gofmt"
+name = "gofmt"
+entry = "gofmt -w"
+language = "system"
+types = ["go"]
+exclude = '^(internal-api/gen/|inference-service/internal/infrastructure/dao/)'
+
+[[repos.hooks]]
+id = "go-vet-user-service"
+name = "go vet (user-service)"
+entry = "go -C user-service vet ./..."
+language = "system"
+files = '^user-service/.*(\.go|go\.(mod|sum))$'
+pass_filenames = false
+
+[[repos.hooks]]
+id = "go-vet-model-service"
+name = "go vet (model-service)"
+entry = "go -C model-service vet ./..."
+language = "system"
+files = '^model-service/.*(\.go|go\.(mod|sum))$'
+pass_filenames = false
+
+[[repos.hooks]]
+id = "go-vet-inference-service"
+name = "go vet (inference-service)"
+entry = "go -C inference-service vet ./..."
+language = "system"
+files = '^(inference-service|utils)/.*(\.go|go\.(mod|sum))$'
+pass_filenames = false
+
+[[repos.hooks]]
+id = "go-vet-internal-api"
+name = "go vet (internal-api)"
+entry = "go -C internal-api vet ./..."
+language = "system"
+files = '^internal-api/.*(\.go|go\.(mod|sum))$'
+pass_filenames = false
+
+[[repos.hooks]]
+id = "go-vet-utils"
+name = "go vet (utils)"
+entry = "go -C utils vet ./..."
+language = "system"
+files = '^utils/.*(\.go|go\.(mod|sum))$'
+pass_filenames = false

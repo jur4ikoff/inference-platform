@@ -1,0 +1,11 @@
+-- CREATE TABLE IF NOT EXISTS users (
+--     id UUID PRIMARY KEY,
+--     created_at TIMESTAMPTZ NOT NULL,
+--     updated_at TIMESTAMPTZ NOT NULL,
+--     firstname TEXT NOT NULL,
+--     lastname TEXT NOT NULL,
+--     login TEXT NOT NULL,
+--     hashed_password TEXT NOT NULL
+-- );
+
+-- CREATE UNIQUE INDEX IF NOT EXISTS users_login_lower_unique_idx ON users (LOWER(login));

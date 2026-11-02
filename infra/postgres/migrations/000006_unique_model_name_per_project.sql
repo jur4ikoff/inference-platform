@@ -1,0 +1,1 @@
+-- CREATE UNIQUE INDEX IF NOT EXISTS models_project_name_key ON models (project, name);

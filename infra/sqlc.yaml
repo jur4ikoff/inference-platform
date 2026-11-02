@@ -1,0 +1,12 @@
+version: "2"
+sql:
+  - name: inference-service
+    engine: postgresql
+    schema: postgres/schema.sql
+    queries: postgres/queries/inference-service
+    gen:
+      go:
+        package: postgres
+        out: ../inference-service/internal/infrastructure/dao
+        sql_package: pgx/v5
+        emit_empty_slices: true
