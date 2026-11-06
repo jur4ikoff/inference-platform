@@ -7,10 +7,12 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/jur4ikoff/internal-api v0.0.0
+	github.com/jur4ikoff/utils v0.0.0
 	google.golang.org/grpc v1.81.1
 )
 
 replace github.com/jur4ikoff/internal-api => ../internal-api
+replace github.com/jur4ikoff/utils => ../utils
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect

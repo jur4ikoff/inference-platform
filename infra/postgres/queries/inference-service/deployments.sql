@@ -9,30 +9,30 @@ SELECT EXISTS (
 INSERT INTO deployments (
     id, container_id, model_id, project, username, name, deployment_name, status, spec
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, container_id, model_id, project, username, name, deployment_name, status, spec;
+RETURNING id, container_id, model_id, project, username, name, deployment_name, status, spec, created_at, updated_at;
 
 -- name: GetDeploymentByID :one
-SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec
+SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec, created_at, updated_at
 FROM deployments WHERE id = $1;
 
 -- name: GetDeploymentByName :one
-SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec
+SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec, created_at, updated_at
 FROM deployments WHERE name = $1;
 
 -- name: ListDeploymentStates :many
 SELECT id, container_id, status, project, deployment_name, name FROM deployments ORDER BY id;
 
 -- name: ListDeployments :many
-SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec
+SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec, created_at, updated_at
 FROM deployments
 WHERE status = ANY(sqlc.arg(statuses)::text[])
 ORDER BY id
 LIMIT sqlc.arg(page_limit)::integer OFFSET sqlc.arg(page_offset)::integer;
 
 -- name: ListAllDeployments :many
-SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec
+SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec, created_at, updated_at
 FROM deployments
-ORDER BY id
+ORDER BY created_at DESC NULLS LAST, id DESC
 LIMIT sqlc.arg(page_limit)::integer OFFSET sqlc.arg(page_offset)::integer;
 
 -- name: GetDeploymentState :one
@@ -40,7 +40,7 @@ SELECT id, container_id, status, project, deployment_name, name FROM deployments
 
 -- name: UpdateDeploymentStatus :execrows
 UPDATE deployments
-SET status = sqlc.arg(new_status)
+SET status = sqlc.arg(new_status), updated_at = clock_timestamp()
 WHERE id = sqlc.arg(id)
   AND container_id = sqlc.arg(container_id)
   AND status = sqlc.arg(expected_status)

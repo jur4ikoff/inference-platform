@@ -3,6 +3,7 @@ module github.com/jur4ikoff/utils
 go 1.26.5
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/rs/zerolog v1.35.1
 )

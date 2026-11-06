@@ -21,10 +21,7 @@ import (
 	"github.com/jur4ikoff/utils/postgres"
 )
 
-const (
-	shutdownTimeout      = 15 * time.Second
-	modelShutdownTimeout = 15 * time.Second
-)
+const shutdownTimeout = 15 * time.Second
 
 func main() {
 	if err := run(); err != nil {
@@ -114,8 +111,11 @@ func run() error {
 	}
 	defer listener.Close()
 	logger.Info().Str("address", listener.Addr().String()).Msg("GRPC server starting")
+	httpMux := http.NewServeMux()
+	httpMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	httpMux.Handle("/", routes)
 	httpServer := &http.Server{
-		Addr: cfg.HTTPAddr, Handler: routes, ReadHeaderTimeout: 5 * time.Second,
+		Addr: cfg.HTTPAddr, Handler: httpMux, ReadHeaderTimeout: 5 * time.Second,
 		BaseContext: func(net.Listener) context.Context { return context.WithoutCancel(ctx) },
 	}
 	httpListener, err := net.Listen("tcp", cfg.HTTPAddr)
@@ -199,18 +199,5 @@ func run() error {
 	if stopDeploymentManager != nil {
 		stopDeploymentManager()
 	}
-	modelCtx, cancelModels := context.WithTimeout(context.WithoutCancel(ctx), modelShutdownTimeout)
-	defer cancelModels()
-	var modelErr error
-	if deploymentManager != nil {
-		modelErr = deploymentManager.Shutdown(modelCtx)
-	} else {
-		modelErr = runtimeClient.StopModelContainers(modelCtx)
-	}
-	if modelErr != nil {
-		logger.Error().Err(modelErr).Msg("failed to shut down model containers")
-	} else {
-		logger.Info().Msg("model containers stopped")
-	}
-	return errors.Join(serveFailure, modelErr)
+	return serveFailure
 }

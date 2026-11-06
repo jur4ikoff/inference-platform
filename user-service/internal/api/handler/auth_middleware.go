@@ -32,7 +32,7 @@ func AuthenticationMiddleware(api huma.API, auth tokenVerifier) AuthMiddleware {
 			return
 		}
 
-		next(huma.WithValue(ctx, principalContextKey{}, principal))
+		next(huma.WithContext(ctx, service.WithPrincipal(context.WithValue(ctx.Context(), principalContextKey{}, principal), principal)))
 	}
 }
 

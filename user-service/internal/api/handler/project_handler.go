@@ -2,66 +2,92 @@ package handler
 
 import (
 	"context"
-	"strings"
-
-	"github.com/danielgtaylor/huma/v2"
 	"github.com/jur4ikoff/user-service/internal/domain"
 	"github.com/jur4ikoff/user-service/internal/service"
+	"net/http"
 )
 
-type projectLister interface {
-	ListProjects(context.Context, domain.UserID, service.ListProjectsInput) (service.ProjectsPage, error)
+type projectService interface {
+	ListProjects(context.Context, service.ListProjectsInput) (service.ProjectsPage, error)
+	CreateProject(context.Context, string, string) (domain.Project, error)
+	GetProject(context.Context, string) (domain.Project, error)
+	UpdateProject(context.Context, string, *string) (domain.Project, error)
+	DeleteProject(context.Context, string) error
+	ListMembers(context.Context, string, int, int) (service.MembersPage, error)
+	ChangeMember(context.Context, string, domain.UserID, domain.RoleID, bool) (bool, error)
 }
+type ProjectHandler struct{ projects projectService }
 
-type ProjectHandler struct {
-	projects projectLister
+func NewProjectHandler(p projectService) *ProjectHandler { return &ProjectHandler{projects: p} }
+func projectResponse(p domain.Project) ProjectResponse {
+	return ProjectResponse{ID: string(p.ID), Name: p.Name, Description: p.Description}
 }
-
-func NewProjectHandler(projects projectLister) *ProjectHandler {
-	return &ProjectHandler{projects: projects}
-}
-
-func (h *ProjectHandler) CreateProject(context.Context, *CreateProjectInput) (*ProjectOutput, error) {
-	return nil, huma.Error501NotImplemented("create project endpoint is not implemented")
-}
-
-func (h *ProjectHandler) GetProject(context.Context, *GetProjectInput) (*ProjectOutput, error) {
-	return nil, huma.Error501NotImplemented("get project endpoint is not implemented")
-}
-
-func (h *ProjectHandler) UpdateProject(_ context.Context, input *UpdateProjectInput) (*UpdateProjectOutput, error) {
-	if strings.TrimSpace(input.ID) == "" {
-		return nil, huma.Error400BadRequest("project id is required")
+func (h *ProjectHandler) CreateProject(ctx context.Context, in *CreateProjectInput) (*ProjectOutput, error) {
+	p, e := h.projects.CreateProject(ctx, in.Body.Name, in.Body.Description)
+	if e != nil {
+		return nil, mapServiceError(e)
 	}
-	if input.Body.Name == nil && input.Body.Description == nil {
-		return nil, huma.Error400BadRequest("at least one field to update is required")
-	}
-
-	return nil, huma.Error501NotImplemented("update project endpoint is not implemented")
+	return &ProjectOutput{Body: projectResponse(p)}, nil
 }
-
-func (h *ProjectHandler) DeleteProject(_ context.Context, input *DeleteProjectInput) (*DeleteProjectOutput, error) {
-	if strings.TrimSpace(input.ID) == "" {
-		return nil, huma.Error400BadRequest("project id is required")
+func (h *ProjectHandler) GetProject(ctx context.Context, in *GetProjectInput) (*ProjectOutput, error) {
+	p, e := h.projects.GetProject(ctx, in.Name)
+	if e != nil {
+		return nil, mapServiceError(e)
 	}
-
-	return nil, huma.Error501NotImplemented("delete project endpoint is not implemented")
+	return &ProjectOutput{Body: projectResponse(p)}, nil
 }
-
-func (h *ProjectHandler) ListProjects(ctx context.Context, input *ListProjectsInput) (*ListProjectsOutput, error) {
-	principal, ok := PrincipalFromContext(ctx)
-	if !ok {
-		return nil, huma.Error401Unauthorized("missing or invalid bearer token")
+func (h *ProjectHandler) UpdateProject(ctx context.Context, in *UpdateProjectInput) (*UpdateProjectOutput, error) {
+	p, e := h.projects.UpdateProject(ctx, in.Name, in.Body.Description)
+	if e != nil {
+		return nil, mapServiceError(e)
 	}
-	page, err := h.projects.ListProjects(ctx, principal.UserID, service.ListProjectsInput{
-		Name: input.Name, Offset: input.Offset, Limit: input.Limit,
-	})
-	if err != nil {
-		return nil, mapServiceError(err)
+	return &UpdateProjectOutput{Body: projectResponse(p)}, nil
+}
+func (h *ProjectHandler) DeleteProject(ctx context.Context, in *DeleteProjectInput) (*DeleteProjectOutput, error) {
+	if e := h.projects.DeleteProject(ctx, in.Name); e != nil {
+		return nil, mapServiceError(e)
 	}
-	projects := make([]ProjectResponse, 0, len(page.Projects))
-	for _, project := range page.Projects {
-		projects = append(projects, ProjectResponse{ID: string(project.ID), Name: project.Name, Description: project.Description})
+	return &DeleteProjectOutput{}, nil
+}
+func (h *ProjectHandler) ListProjects(ctx context.Context, in *ListProjectsInput) (*ListProjectsOutput, error) {
+	page, e := h.projects.ListProjects(ctx, service.ListProjectsInput{Name: in.Name, Offset: in.Offset, Limit: in.Limit})
+	if e != nil {
+		return nil, mapServiceError(e)
 	}
-	return &ListProjectsOutput{Body: ListProjectsResponse{Projects: projects, NextPageToken: page.NextPageToken}}, nil
+	ps := make([]ProjectResponse, 0, len(page.Projects))
+	for _, p := range page.Projects {
+		ps = append(ps, projectResponse(p))
+	}
+	return &ListProjectsOutput{Body: ListProjectsResponse{Projects: ps, NextPageToken: page.NextPageToken}}, nil
+}
+func (h *ProjectHandler) ListMembers(ctx context.Context, in *ListMembersInput) (*ListMembersOutput, error) {
+	p, e := h.projects.ListMembers(ctx, in.Name, in.Offset, in.Limit)
+	if e != nil {
+		return nil, mapServiceError(e)
+	}
+	out := &ListMembersOutput{}
+	out.Body.Members = make([]MemberResponse, 0, len(p.Members))
+	out.Body.NextPageToken = p.NextPageToken
+	for _, m := range p.Members {
+		out.Body.Members = append(out.Body.Members, MemberResponse{UserID: string(m.UserID), Email: m.Email, Firstname: m.Firstname, Lastname: m.Lastname, RoleID: int(m.RoleID), RoleName: m.RoleName})
+	}
+	return out, nil
+}
+func (h *ProjectHandler) PutMember(ctx context.Context, in *PutMemberInput) (*PutMemberOutput, error) {
+	created, e := h.projects.ChangeMember(ctx, in.Name, domain.UserID(in.UserID), domain.RoleID(in.Body.RoleID), false)
+	if e != nil {
+		return nil, mapServiceError(e)
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	return &PutMemberOutput{Status: status}, nil
+}
+func (h *ProjectHandler) DeleteMember(ctx context.Context, in *MemberPathInput) (*DeleteMemberOutput, error) {
+	_, e := h.projects.ChangeMember(ctx, in.Name, domain.UserID(in.UserID), 0, true)
+	if e != nil {
+		return nil, mapServiceError(e)
+	}
+	return &DeleteMemberOutput{}, nil
 }

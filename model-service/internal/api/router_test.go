@@ -15,6 +15,7 @@ import (
 	"github.com/jur4ikoff/model-service/internal/service"
 )
 
+// Техника: класс доступной документации.
 func TestDocumentation(t *testing.T) {
 	router := NewHandler(nil).Router()
 	for _, test := range []struct {
@@ -75,10 +76,9 @@ func TestDocumentation(t *testing.T) {
 		{"/api/v1/projects/{project}/models/{model_id}", "get", "200", false},
 		{"/api/v1/projects/{project}/models/{model_id}", "patch", "200", true},
 		{"/api/v1/projects/{project}/models/{model_id}", "delete", "204", false},
-		{"/api/v1/projects/{project}/models/{model_id}/deployment", "post", "201", false},
+		{"/api/v1/projects/{project}/models/{model_id}/deployment", "post", "202", false},
 		{"/api/v1/projects/{project}/models/{model_id}/deployment", "get", "200", false},
-		{"/api/v1/projects/{project}/models/{model_id}/deployment", "delete", "204", false},
-		{"/api/v1/projects/{project}/deployments", "get", "200", false},
+		{"/api/v1/projects/{project}/models/{model_id}/deployment", "delete", "202", false},
 	} {
 		op := spec.Paths[test.path][test.method]
 		if op.OperationID == "" || op.Responses[test.status] == nil || (test.body && len(op.RequestBody) == 0) {
@@ -128,8 +128,12 @@ func TestDocumentation(t *testing.T) {
 	if _, exists := spec.Paths["/api/v1/projects/{project}/models/{model_id}/interactions"]; exists {
 		t.Fatal("removed model interaction path is still documented")
 	}
+	if _, exists := spec.Paths["/api/v1/projects/{project}/deployments"]["get"]; !exists {
+		t.Fatal("active deployment list is not documented")
+	}
 }
 
+// Техника: класс неверсионированных маршрутов.
 func TestUnversionedRoutesNotFound(t *testing.T) {
 	router := NewHandler(nil).Router()
 	for _, path := range []string{"/models", "/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", "/docs", "/openapi.yaml", "/api/v2/models"} {
@@ -137,6 +141,7 @@ func TestUnversionedRoutesNotFound(t *testing.T) {
 	}
 }
 
+// Техника: класс удалённых маршрутов.
 func TestRemovedModelRoutesNotFound(t *testing.T) {
 	router := NewHandler(nil).Router()
 	for _, method := range []string{http.MethodGet, http.MethodPost} {
@@ -145,6 +150,7 @@ func TestRemovedModelRoutesNotFound(t *testing.T) {
 	apiRequest(t, router, http.MethodPost, "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1/interactions", `{"input":{}}`, http.StatusNotFound)
 }
 
+// Техника: классы эквивалентности имён и идентификаторов.
 func TestModelRoutesRejectNamesAsIdentifiers(t *testing.T) {
 	router := NewHandler(nil).Router()
 	for _, test := range []struct {
@@ -162,16 +168,17 @@ func TestModelRoutesRejectNamesAsIdentifiers(t *testing.T) {
 	apiRequest(t, router, http.MethodGet, "/api/v1/projects/project-1/models/by-id/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", "", http.StatusNotFound)
 }
 
+// Техника: переходы состояний модели и deployment.
 func TestModelRoutes(t *testing.T) {
 	model := domain.Model{
-		ID: "0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", Name: "demo", Description: "description", UserID: "user-1", Project: "project-1",
-		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), Spec: json.RawMessage(`{"layers":[1,2]}`),
+		ID: "0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", Name: "demo", Description: "description", Username: "user-1", Project: "project-1",
+		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), Spec: domain.ModelSpec{ProviderType: domain.ProviderHuggingFace, ProviderHuggingFace: &domain.HuggingFaceProvider{Repo: "org/model"}},
 	}
 	fake := &modelStub{model: model}
 	router := NewHandler(fake).Router()
-	response := apiRequest(t, router, http.MethodPost, "/api/v1/projects/project-1/models", `{"name":"demo","user_id":"user-1","spec":{"layers":[1,2]}}`, http.StatusCreated)
+	response := apiRequest(t, router, http.MethodPost, "/api/v1/projects/project-1/models", `{"name":"demo","spec":{"provider_type":"HUGGING_FACE","provider_hugging_face":{"repo":"org/model"}}}`, http.StatusCreated)
 	assertModelResponse(t, response, model)
-	if fake.created.Name != "demo" || fake.created.UserID != "user-1" || fake.created.Project != "project-1" || string(fake.created.Spec) != string(model.Spec) {
+	if fake.created.Name != "demo" || fake.created.Username != "" || fake.created.Project != "project-1" || fake.created.Spec.ProviderType != domain.ProviderHuggingFace || fake.created.Spec.ProviderHuggingFace == nil || fake.created.Spec.ProviderHuggingFace.Repo != "org/model" {
 		t.Fatalf("unexpected create input: %+v", fake.created)
 	}
 
@@ -198,6 +205,24 @@ func TestModelRoutes(t *testing.T) {
 		t.Fatalf("unexpected delete response: %s; project=%q; model_id=%q", response.Body.String(), fake.project, fake.modelID)
 	}
 
+	fake.deployment = domain.Deployment{ID: "0197eb5a-37c6-7e48-8cd6-0c19edcd72f2", ModelID: model.ID, Project: model.Project, Name: model.Name, Status: "starting"}
+	fake.deploymentAccepted = true
+	response = apiRequest(t, router, http.MethodPost, "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1/deployment", "", http.StatusAccepted)
+	if response.Header().Get("Location") != "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1/deployment" {
+		t.Fatalf("unexpected deployment location: %q", response.Header().Get("Location"))
+	}
+	assertDeploymentResponse(t, response, fake.deployment)
+
+	response = apiRequest(t, router, http.MethodGet, "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1/deployment", "", http.StatusOK)
+	assertDeploymentResponse(t, response, fake.deployment)
+
+	response = apiRequest(t, router, http.MethodDelete, "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1/deployment", "", http.StatusAccepted)
+	if response.Body.Len() != 0 {
+		t.Fatalf("stop response must be empty: %s", response.Body.String())
+	}
+	fake.deploymentAccepted = false
+	apiRequest(t, router, http.MethodDelete, "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1/deployment", "", http.StatusNoContent)
+
 	fake.model = domain.Model{}
 	response = apiRequest(t, router, http.MethodGet, "/api/v1/projects/project-1/models", "", http.StatusOK)
 	if err := json.Unmarshal(response.Body.Bytes(), &list); err != nil || list.Models == nil || len(list.Models) != 0 || list.NextPageToken != nil || fake.project != "project-1" {
@@ -205,6 +230,7 @@ func TestModelRoutes(t *testing.T) {
 	}
 }
 
+// Техника: классы эквивалентности и граничные значения HTTP-запросов.
 func TestRequestValidation(t *testing.T) {
 	router := NewHandler(nil).Router()
 	for _, test := range []struct {
@@ -213,8 +239,10 @@ func TestRequestValidation(t *testing.T) {
 	}{
 		{"malformed JSON", `{"name":`, http.StatusBadRequest},
 		{"missing required fields", `{}`, http.StatusUnprocessableEntity},
-		{"unknown field", `{"name":"demo","user_id":"u","spec":{},"unknown":true}`, http.StatusUnprocessableEntity},
-		{"project ID in body", `{"name":"demo","user_id":"u","project":"other-project","spec":{}}`, http.StatusUnprocessableEntity},
+		{"unknown field", `{"name":"demo","username":"u","spec":{},"unknown":true}`, http.StatusUnprocessableEntity},
+		{"unknown specification field", `{"name":"demo","username":"u","spec":{"provider_type":"HUGGING_FACE","provider_hugging_face":{"repo":"org/model","unknown":true}}}`, http.StatusUnprocessableEntity},
+		{"unsupported provider", `{"name":"demo","spec":{"provider_type":"OTHER","provider_hugging_face":{"repo":"org/model"}}}`, http.StatusUnprocessableEntity},
+		{"project ID in body", `{"name":"demo","username":"u","project":"other-project","spec":{}}`, http.StatusUnprocessableEntity},
 		{"body limit", `{"name":"` + strings.Repeat("a", (1<<20)+1) + `"}`, http.StatusRequestEntityTooLarge},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -223,6 +251,7 @@ func TestRequestValidation(t *testing.T) {
 	}
 }
 
+// Техника: классы эквивалентности ошибок сервиса.
 func TestServiceErrors(t *testing.T) {
 	for _, test := range []struct {
 		err    error
@@ -274,22 +303,36 @@ func assertModelResponse(t *testing.T, response *httptest.ResponseRecorder, expe
 	if err := json.Unmarshal(response.Body.Bytes(), &model); err != nil {
 		t.Fatal(err)
 	}
-	if model.ID != expected.ID || model.Name != expected.Name || model.UserID != expected.UserID || model.Project != expected.Project || model.Description != expected.Description || !model.CreatedAt.Equal(expected.CreatedAt) || !model.UpdatedAt.Equal(expected.UpdatedAt) || string(model.Spec) != string(expected.Spec) {
+	if model.ID != expected.ID || model.Name != expected.Name || model.Username != expected.Username || model.Project != expected.Project || model.Description != expected.Description || !model.CreatedAt.Equal(expected.CreatedAt) || !model.UpdatedAt.Equal(expected.UpdatedAt) || model.Spec.ProviderType != string(expected.Spec.ProviderType) || model.Spec.ProviderHuggingFace == nil || expected.Spec.ProviderHuggingFace == nil || model.Spec.ProviderHuggingFace.Repo != expected.Spec.ProviderHuggingFace.Repo {
 		t.Fatalf("unexpected model response: %s", response.Body.String())
 	}
 }
 
-type modelStub struct {
-	model   domain.Model
-	err     error
-	project string
-	modelID string
-	created service.CreateModelInput
-	updated service.UpdateModelInput
+func assertDeploymentResponse(t *testing.T, response *httptest.ResponseRecorder, expected domain.Deployment) {
+	t.Helper()
+	var deployment deploymentResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &deployment); err != nil {
+		t.Fatal(err)
+	}
+	if deployment.ID != expected.ID || deployment.ModelID != expected.ModelID || deployment.Project != expected.Project || deployment.Status != expected.Status {
+		t.Fatalf("unexpected deployment response: %s", response.Body.String())
+	}
 }
 
+type modelStub struct {
+	model              domain.Model
+	err                error
+	project            string
+	modelID            string
+	created            service.CreateModelInput
+	updated            service.UpdateModelInput
+	deployment         domain.Deployment
+	deploymentAccepted bool
+}
+
+// Техника: классы эквивалентности идентификаторов модели.
 func TestGetModelUsesID(t *testing.T) {
-	model := domain.Model{ID: "0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", Project: "project-1", Name: "renamed", Spec: json.RawMessage(`{}`)}
+	model := domain.Model{ID: "0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", Project: "project-1", Name: "renamed", Spec: domain.ModelSpec{ProviderType: domain.ProviderHuggingFace, ProviderHuggingFace: &domain.HuggingFaceProvider{Repo: "org/model"}}}
 	fake := &modelStub{model: model}
 	router := NewHandler(fake).Router()
 	response := apiRequest(t, router, http.MethodGet, "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", "", http.StatusOK)
@@ -316,7 +359,7 @@ func (s *modelStub) List(_ context.Context, input service.ListModelsInput) (serv
 	if s.model.ID == "" {
 		return service.ModelsPage{}, s.err
 	}
-	return service.ModelsPage{Models: []domain.Model{s.model}}, s.err
+	return service.ModelsPage{Models: []domain.Model{s.model}, Statuses: map[string]string{s.model.ID: "running"}}, s.err
 }
 
 func (s *modelStub) Update(_ context.Context, project, modelID string, input service.UpdateModelInput) (domain.Model, error) {
@@ -327,4 +370,52 @@ func (s *modelStub) Update(_ context.Context, project, modelID string, input ser
 func (s *modelStub) Delete(_ context.Context, project, modelID string) error {
 	s.project, s.modelID = project, modelID
 	return s.err
+}
+
+func (s *modelStub) CreateDeployment(_ context.Context, project, modelID string) (domain.Deployment, error) {
+	s.project, s.modelID = project, modelID
+	return s.deployment, s.err
+}
+
+func (s *modelStub) GetDeployment(_ context.Context, project, modelID string) (domain.Deployment, error) {
+	s.project, s.modelID = project, modelID
+	return s.deployment, s.err
+}
+
+func (s *modelStub) GetDeploymentsHistory(_ context.Context, project string) ([]domain.Deployment, error) {
+	s.project = project
+	if s.deployment.ID == "" {
+		return []domain.Deployment{}, s.err
+	}
+	return []domain.Deployment{s.deployment}, s.err
+}
+
+func (s *modelStub) StopDeployment(_ context.Context, project, modelID string) (bool, error) {
+	s.project, s.modelID = project, modelID
+	return s.deploymentAccepted, s.err
+}
+
+func (s *modelStub) GetActiveDeployments(ctx context.Context, project string) ([]domain.Deployment, error) {
+	return s.GetDeploymentsHistory(ctx, project)
+}
+
+// Техника: класс модели со статусом.
+func TestListModelsIncludesStatus(t *testing.T) {
+	router := NewHandler(&modelStub{model: domain.Model{ID: "model-1"}}).Router()
+	response := apiRequest(t, router, http.MethodGet, "/api/v1/projects/demo/models", "", http.StatusOK)
+	var body struct {
+		Models []struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || len(body.Models) != 1 || body.Models[0].ID != "model-1" || body.Models[0].Status != "running" {
+		t.Fatalf("unexpected list response: %s", response.Body.String())
+	}
+}
+
+// Техника: класс активного deployment.
+func TestDeleteModelWithActiveDeploymentReturnsConflict(t *testing.T) {
+	router := NewHandler(&modelStub{err: service.ErrActiveDeployments}).Router()
+	apiRequest(t, router, http.MethodDelete, "/api/v1/projects/ml/models/e75957e1-6ac2-403c-8154-103d8d9c333d", "", http.StatusConflict)
 }

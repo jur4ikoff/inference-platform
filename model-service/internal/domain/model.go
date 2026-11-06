@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"encoding/json"
 	"errors"
 	"time"
 )
@@ -17,9 +16,9 @@ type Model struct {
 	UpdatedAt   time.Time
 	Name        string
 	Description string
-	UserID      string
+	Username    string
 	Project     string
-	Spec        json.RawMessage
+	Spec        ModelSpec
 }
 
 type ModelState struct {
@@ -27,4 +26,18 @@ type ModelState struct {
 	Project string
 	Name    string
 	Status  string
+}
+
+// Deployment is the runtime-owned representation returned to the API. Model
+// Service deliberately keeps no copy of it: InferenceService is the source of
+// truth for a deployment and its lifecycle state.
+type Deployment struct {
+	ID        string
+	ModelID   string
+	Project   string
+	Name      string
+	Username  string
+	Status    string
+	StartedAt *time.Time
+	UpdatedAt *time.Time
 }

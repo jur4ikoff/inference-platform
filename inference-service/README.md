@@ -13,18 +13,11 @@ Go-сервис для создания deployment моделей в Docker, н�
 - `cmd/main.go` — создание зависимостей, запуск HTTP/gRPC и завершение приложения.
 
 `RuntimeService` с одним Docker-клиентом создаётся в `main` и передаётся сервису
-и менеджеру через интерфейсы. При завершении приложение останавливает серверы
-и менеджер, затем все активные контейнеры моделей и закрывает Docker-клиент
-и пул PostgreSQL.
-
-При `SIGINT`/`SIGTERM` HTTP и gRPC получают до 15 секунд на завершение запросов.
-После этого приложение параллельно останавливает контейнеры с меткой
-`com.docker.compose.project=inference-models`, включая контейнеры без записи в БД.
-Каждой модели Docker даёт 5 секунд на завершение, затем отправляет `SIGKILL`.
-Общий этап остановки моделей ограничен 15 секундами; менеджер сверяет итоговые
-статусы с Docker и удаляет маршруты остановленных моделей. Записи deployment,
-контейнеры и том кеша сохраняются. Автоматического запуска моделей после
-перезапуска сервиса нет. В Compose `stop_grace_period` равен 35 секундам.
+и менеджеру через интерфейсы. При `SIGINT`/`SIGTERM` HTTP и gRPC получают до
+15 секунд на завершение запросов. Затем приложение завершает менеджер и закрывает
+Docker-клиент и пул PostgreSQL. Контейнеры моделей продолжают работать; при
+следующем запуске менеджер сверяет их состояние и восстанавливает маршруты.
+Пока сервис остановлен, HTTP proxy недоступен.
 
 ## Проект и модель
 
@@ -35,8 +28,8 @@ Go-сервис для создания deployment моделей в Docker, н�
 Deployment хранит `id`, `container_id`, `model_id`, `project`, `username`, `name`,
 `deployment_name`, `status` и `spec` (JSONB). `name` — имя Docker-контейнера со случайным
 суффиксом, например `qwen-small-abcde`; публичный URL использует `project` и
-`deployment_name`: `http://demo.qwen-small.localhost:8082/`.
-Сейчас `username` содержит строковый `UserID`.
+`deployment_name`: `http://localhost:8000/inference/demo/qwen-small/`.
+`username` содержит имя пользователя, указанное при создании модели.
 
 Перед созданием сервис проверяет активные deployments по `(project, model_id)`.
 `PENDING`, `STARTING`, `STARTED`, `RUNNING` и `STOPPING` блокируют повторный запуск.
@@ -51,63 +44,37 @@ Deployment хранит `id`, `container_id`, `model_id`, `project`, `username`,
 ## HTTP-прокси
 
 Один HTTP-сервер слушает `HTTP_ADDR` (по умолчанию `:8080`). В Docker Compose
-он доступен с хоста на `http://localhost:8082`.
+он доступен с хоста через NGINX на `http://localhost:8000/inference/`.
 
-`PROXY_PUBLIC_URL` задаёт базовый внешний адрес, по умолчанию `http://localhost:8082`.
-Интерфейс и API каждого deployment доступны на отдельном origin
-`<project>.<deployment_name>.<host>`:
+`PROXY_PUBLIC_URL` задаёт внешний адрес proxy, по умолчанию `http://localhost:8082`. В стандартном Compose HTTP-порт inference-service не опубликован; NGINX пересылает запросы внутри Docker-сети.
+Интерфейс и API доступны по пути `/<project>/<deployment_name>/`:
 
 ```text
-http://demo.qwen-small.localhost:8082/
+http://localhost:8000/inference/ml/qwen-small/
   -> http://qwen-small-abcde:8080/
 ```
 
-Проект и имя deployment берутся из записи в БД. Одинаковые имена в разных
-проектах имеют разные адреса. Все поддомены обслуживает тот же HTTP-сервер:
-он выбирает контейнер по `Host`. В Chrome и Firefox поддомены `.localhost`
-работают без настройки DNS; для браузеров без такой поддержки нужен локальный
-DNS или явные записи в `/etc/hosts`. Для production задайте, например,
-`PROXY_PUBLIC_URL=https://models.example.com`, настройте DNS и TLS для адресов
-вида `demo.qwen-small.models.example.com` и сохраняйте исходный `Host` на входном
-прокси. Сертификат `*.models.example.com` не покрывает два уровня поддоменов:
-нужны сертификаты для конкретных имён либо `*.<deployment_name>.models.example.com`.
-Значение переменной — origin без пути; IP-адрес вместо hostname не допускается.
-
-Разные поддомены изолируют IndexedDB и localStorage интерфейса llama.cpp.
-Открывайте интерфейсы напрямую по новым адресам. Старые `/proxy/...` маршруты
-и поддомены с UUID удалены, редиректов нет; они возвращают 404.
-История прежних origin сохраняется в браузере, но автоматически не переносится.
-История привязана к паре `(project, deployment_name)`: повторное создание
-deployment с тем же проектом и именем использует тот же origin и историю.
-Это разделение браузерного хранилища; проверка прав пользователя на проект
-должна выполняться отдельно перед доступом к deployment.
-
-Менеджер регистрирует маршрут, когда контейнер работает и deployment имеет статус
-`STARTED` или `RUNNING`. При `STOPPING`, остановке, удалении или паузе контейнера
-маршрут убирается. При запуске приложения маршруты восстанавливаются из БД и Docker.
-Маршруты удалённых из БД deployments очищаются при периодической сверке.
-
-```text
-POST http://demo.qwen-small.localhost:8082/v1/chat/completions
-  -> http://qwen-small-abcde:8080/v1/chat/completions
-```
-
-Интерфейс, статические файлы и API обслуживаются от корня `/` на поддомене.
-Путь, метод, query string, тело запроса и потоковый ответ передаются backend.
-
-Прокси принимает только поддомены активных deployments.
-Чужой `Origin` отклоняется с 403; CORS-заголовки backend удаляются, чтобы один
-интерфейс не мог читать API другого. Общий hostname без проекта и deployment
-не обслуживает модели.
+Прокси выбирает контейнер по проекту и имени deployment, удаляет этот префикс
+перед отправкой запроса и передаёт его в `X-Forwarded-Prefix`. Например:
 
 ```sh
-curl --resolve demo.qwen-small.localhost:8082:127.0.0.1 \
-  http://demo.qwen-small.localhost:8082/health
-curl --resolve demo.qwen-small.localhost:8082:127.0.0.1 \
-  http://demo.qwen-small.localhost:8082/v1/chat/completions \
+curl http://localhost:8000/inference/ml/qwen-small/health
+curl http://localhost:8000/inference/ml/qwen-small/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{"model":"Qwen/model","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
+
+Прокси добавляет в HTML интерфейса bootstrap, который изолирует базы IndexedDB
+и ключи localStorage по паре `(project, deployment_name)` и направляет
+корневые API-запросы UI в нужный префикс. Новые пространства имён не переносят
+историю со старых поддоменов. Это разделение данных UI, а не граница безопасности:
+все страницы имеют один origin и могут обращаться к данным друг друга. Для
+разграничения пользователей необходимы авторизация и изоляция на сервере.
+
+Маршрут появляется, когда контейнер работает и deployment имеет статус
+`STARTED` или `RUNNING`, и удаляется при остановке или паузе контейнера. После
+перезапуска сервиса маршруты восстанавливаются при сверке с Docker. Неизвестные
+и неактивные маршруты возвращают 404; ошибка соединения с backend — 502.
 
 Проект и имя deployment должны содержать от 1 до 63 строчных латинских букв,
 цифр или `-` и начинаться и заканчиваться буквой или цифрой. Точки, `_` и
@@ -158,9 +125,9 @@ curl --resolve demo.qwen-small.localhost:8082:127.0.0.1 \
 
 Контракт и сгенерированные типы — в [internal-api](../internal-api/README.md).
 Готовые команды для ручных запросов — в [grpcurl.md](grpcurl.md).
-`StartDeployment` принимает `project`, `model_id`, `user_id`, `deployment_name` и `spec`.
+`StartDeployment` принимает `project`, `model_id`, `username`, `deployment_name` и `spec`.
 В protobuf JSON поле называется `deploymentName`; адрес имеет вид
-`http://{project}.{deployment_name}.localhost:8082/` при настройках по умолчанию.
+`http://localhost:8000/inference/{project}/{deployment_name}/` при настройках по умолчанию.
 Реализация создаёт контейнер, сохраняет запись deployment со статусом `PENDING`
 и запускает контейнер. `STARTED` и маршрут прокси выставляет `DeploymentManager`
 по фактическому состоянию Docker. RPC возвращает первоначально сохранённую запись,
@@ -189,7 +156,7 @@ grpcurl -plaintext -d '{"deploymentId":"DEPLOYMENT_UUID"}' \
 `ListDeployments` возвращает запускающиеся и запущенные deployments: `PENDING`,
 `STARTING`, `STARTED` и `RUNNING`. `ListAllDeployments` возвращает записи во всех
 статусах, включая `STOPPING`, `STOPPED`, `FAILED` и `UNKNOWN`.
-Оба метода читают полные записи из PostgreSQL в порядке возрастания `id`.
+`ListDeployments` читает записи в порядке возрастания `id`. `ListAllDeployments` возвращает сначала новые запуски по времени создания; у записей до миграции время неизвестно и их взаимный порядок не отражает порядок запуска.
 Принимают `offset` (по умолчанию `0`), `limit` (по умолчанию `20`, максимум `100`)
 и строковый `next_page_token`. Токен содержит смещение следующей страницы и
 при наличии заменяет `offset`. Ответ содержит `deployments` и `next_page_token`;
@@ -279,3 +246,5 @@ go test -race ./internal/manager ./internal/runtime
 Все проверки проекта: `make lint`. Для интеграционных тестов репозитория задайте
 `INFERENCE_TEST_DATABASE_URL`. Они используют изолированные таблицы и схемы
 с откатом транзакции и не меняют данные приложения.
+
+В `ListDeployments` и `ListAllDeployments` поля `started_at` и `updated_at` содержат время создания записи запуска и последнего изменения её статуса соответственно. Для записей, созданных до соответствующих миграций, неизвестные значения отсутствуют.

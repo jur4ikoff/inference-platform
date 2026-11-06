@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -162,7 +163,16 @@ func deploymentFromRow(row postgres.Deployment) (domain.Deployment, error) {
 		DeploymentName: row.DeploymentName,
 		Status:         savedStatus,
 		Spec:           savedSpec,
+		StartedAt:      nullableTime(row.CreatedAt), UpdatedAt: nullableTime(row.UpdatedAt),
 	}, nil
+}
+
+func nullableTime(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	t := value.Time.UTC()
+	return &t
 }
 
 func (r *DeploymentRepository) ListDeploymentStates(ctx context.Context) ([]domain.DeploymentState, error) {

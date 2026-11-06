@@ -1,128 +1,249 @@
 package manager
 
 import (
+	"bufio"
+	"bytes"
+	"compress/gzip"
+	"context"
 	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"strings"
-	"testing"
-
 	"github.com/google/uuid"
 	"github.com/jur4ikoff/inference-service/internal/config"
 	"github.com/jur4ikoff/inference-service/internal/domain"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"strings"
+	"testing"
 )
 
-func TestProxyDeploymentOrigins(t *testing.T) {
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// Техника: классы эквивалентности маршрутов, host и origin.
+func TestProxyDeploymentPaths(t *testing.T) {
 	proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://localhost:8082"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := domain.DeploymentState{ID: uuid.New(), Project: "demo", DeploymentName: "qwen"}
-	second := domain.DeploymentState{ID: uuid.New(), Project: "demo", DeploymentName: "qwen-2"}
-	otherProject := domain.DeploymentState{ID: uuid.New(), Project: "other", DeploymentName: "qwen"}
-	for _, deployment := range []domain.DeploymentState{first, second, otherProject} {
-		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Content-Type", "text/html")
-			body, _ := io.ReadAll(r.Body)
-			fmt.Fprintf(w, "%s.%s|%s|%s|%s|%s", deployment.Project, deployment.DeploymentName, r.URL.RequestURI(), r.Method, body, r.Header.Get("X-Forwarded-Prefix"))
-		}))
-		t.Cleanup(upstream.Close)
-		if err := proxy.Upsert(deployment, upstream.URL); err != nil {
+	first := domain.DeploymentState{ID: uuid.New(), Project: "ml", DeploymentName: "qwen"}
+	second := domain.DeploymentState{ID: uuid.New(), Project: "test", DeploymentName: "qwen"}
+	for _, deployment := range []domain.DeploymentState{first, second} {
+		if err := proxy.Upsert(deployment, "http://model:8080"); err != nil {
 			t.Fatal(err)
 		}
-	}
-	firstHost := "demo.qwen.localhost:8082"
-	secondHost := "demo.qwen-2.localhost:8082"
-	for _, test := range []struct {
-		name, host, path, method, origin, body string
-		status                                 int
-	}{
-		{name: "old UI removed", host: "localhost:8082", path: "/proxy/demo/qwen/?a=b%2Fc", status: 404},
-		{name: "old UI without trailing slash removed", host: "localhost:8082", path: "/proxy/demo/qwen", status: 404},
-		{name: "old nested UI removed", host: "localhost:8082", path: "/proxy/demo/qwen/chat/123", status: 404},
-		{name: "first UI", host: firstHost, path: "/", status: 200, body: "demo.qwen|/|GET||"},
-		{name: "second UI", host: secondHost, path: "/", status: 200, body: "demo.qwen-2|/|GET||"},
-		{name: "same name in another project", host: "other.qwen.localhost:8082", path: "/", status: 200, body: "other.qwen|/|GET||"},
-		{name: "relative static asset", host: firstHost, path: "/_app/bundle.js", status: 200, body: "demo.qwen|/_app/bundle.js|GET||"},
-		{name: "same-origin API", host: firstHost, path: "/v1/chat/completions?stream=true", method: "POST", origin: "http://" + firstHost, status: 200, body: "demo.qwen|/v1/chat/completions?stream=true|POST|request-body|"},
-		{name: "old API removed", host: "localhost:8082", path: "/proxy/demo/qwen/v1/chat/completions", method: "POST", status: 404},
-		{name: "cross-deployment API", host: secondHost, path: "/v1/chat/completions", method: "POST", origin: "http://" + firstHost, status: 403},
-		{name: "cross-deployment preflight", host: secondHost, path: "/v1/chat/completions", method: "OPTIONS", origin: "http://" + firstHost, status: 403},
-		{name: "cross-origin shared API", host: "localhost:8082", path: "/proxy/demo/qwen/v1/models", origin: "http://" + secondHost, status: 403},
-		{name: "opaque origin", host: firstHost, path: "/v1/models", origin: "null", status: 403},
-		{name: "another deployment path on first host", host: firstHost, path: "/proxy/demo/qwen-2/", status: 404},
-		{name: "old UUID host removed", host: first.ID.String() + ".localhost:8082", path: "/", status: 404},
-		{name: "unknown deployment", host: "demo.unknown.localhost:8082", path: "/", status: 404},
-		{name: "unknown project", host: "unknown.qwen.localhost:8082", path: "/", status: 404},
-		{name: "missing project", host: "qwen.localhost:8082", path: "/", status: 404},
-		{name: "extra label", host: "demo.extra.qwen.localhost:8082", path: "/", status: 404},
-		{name: "proxy root removed on deployment host", host: firstHost, path: "/proxy", status: 404},
-		{name: "unknown base host", host: "evil.example:8082", path: "/proxy/demo/qwen/", status: 404},
-		{name: "wrong port", host: "demo.qwen.localhost:8083", path: "/", status: 404},
-		{name: "suffix confusion", host: "demo.qwen.localhost.evil.example:8082", path: "/", status: 404},
-		{name: "missing route", host: "localhost:8082", path: "/proxy/demo/unknown/", status: 404},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			method := test.method
-			if method == "" {
-				method = http.MethodGet
+		key := routeKey{deployment.Project, deployment.DeploymentName}
+		proxy.routes[key].handler.(*httputil.ReverseProxy).Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if got := req.Header.Get("X-Forwarded-Prefix"); got != "/"+deployment.Project+"/"+deployment.DeploymentName {
+				t.Errorf("prefix=%s", got)
 			}
-			var body io.Reader
-			if method != http.MethodGet {
-				body = strings.NewReader("request-body")
-			}
-			request := httptest.NewRequest(method, "http://"+test.host+test.path, body)
-			request.Header.Set("X-Forwarded-Host", secondHost)
-			request.Header.Set("X-Forwarded-Prefix", "/proxy/demo/qwen-2")
-			if test.origin != "" {
-				request.Header.Set("Origin", test.origin)
-			}
-			response := httptest.NewRecorder()
-			proxy.ServeHTTP(response, request)
-			if response.Code != test.status || response.Header().Get("Location") != "" {
-				t.Fatalf("status=%d location=%q, want %d without redirect", response.Code, response.Header().Get("Location"), test.status)
-			}
-			if test.body != "" && response.Body.String() != test.body {
-				t.Fatalf("body=%q, want %q", response.Body.String(), test.body)
-			}
-			if response.Header().Get("Access-Control-Allow-Origin") != "" || response.Header().Get("Access-Control-Allow-Credentials") != "" {
-				t.Fatal("upstream CORS must not expose a deployment to other origins")
-			}
-			if response.Code == http.StatusOK && strings.Contains(response.Header().Get("Content-Security-Policy"), "sandbox") {
-				t.Fatal("the isolated UI must be able to execute its scripts")
-			}
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(req.URL.RequestURI()))}, nil
 		})
 	}
-
-	proxy.Remove(first.ID)
-	for _, address := range []string{"http://" + firstHost + "/", "http://localhost:8082/proxy/demo/qwen/"} {
-		response := httptest.NewRecorder()
-		proxy.ServeHTTP(response, httptest.NewRequest(http.MethodGet, address, nil))
-		if response.Code != http.StatusNotFound {
-			t.Fatal("removing a route must disable its deployment hostname")
+	for _, tc := range []struct {
+		path, host, origin, body string
+		status                   int
+	}{
+		{"/ml/qwen/v1/chat/completions?x=a%2Fb", "localhost:8082", "http://localhost:8082", "/v1/chat/completions?x=a%2Fb", 200},
+		{"/test/qwen/health", "localhost:8082", "", "/health", 200},
+		{"/other/qwen/", "localhost:8082", "", "", 404},
+		{"/ml/qwen/", "evil:8082", "", "", 404},
+		{"/ml/qwen/", "localhost:8082", "http://evil", "", 403},
+		{"/ml/qwen", "localhost:8082", "", "", 308},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "http://"+tc.host+tc.path, nil)
+		if tc.origin != "" {
+			req.Header.Set("Origin", tc.origin)
+		}
+		w := httptest.NewRecorder()
+		proxy.ServeHTTP(w, req)
+		if w.Code != tc.status || tc.body != "" && w.Body.String() != tc.body {
+			t.Errorf("%s: status=%d body=%s", tc.path, w.Code, w.Body.String())
 		}
 	}
-	response := httptest.NewRecorder()
-	proxy.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "http://other.qwen.localhost:8082/", nil))
-	if response.Code != http.StatusOK || !strings.HasPrefix(response.Body.String(), "other.qwen|") {
-		t.Fatal("removing a deployment must not affect the same deployment name in another project")
+	proxy.Remove(first.ID)
+	w := httptest.NewRecorder()
+	proxy.ServeHTTP(w, httptest.NewRequest("GET", "http://localhost:8082/ml/qwen/", nil))
+	if w.Code != 404 {
+		t.Fatal("removed route still active")
 	}
 }
 
-func TestProxyPublicURL(t *testing.T) {
-	for _, address := range []string{"", "http://127.0.0.1:8082", "http://[::1]:8082", "http://localhost:0", "http://localhost:65536", "http://localhost/path", "https://user:password@models.example.com", "http://localhost?x=y", "http://localhost?", "ftp://localhost", "http://bad_host", "http://-bad.localhost"} {
-		if _, err := NewProxyManager(config.ProxyConfig{PublicURL: address}); err == nil {
-			t.Errorf("accepted invalid public origin %q", address)
-		}
+// Техника: класс HTML-ответа с ресурсами.
+func TestPrepareUIResponse(t *testing.T) {
+	body := `<html><head><script src="/assets/app.js"></script></head><body></body></html>`
+	response := &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}
+	if err := prepareUIResponse(response, "/ml/qwen/"); err != nil {
+		t.Fatal(err)
 	}
-	proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "https://models.example.com:443/"})
+	result, err := io.ReadAll(response.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := proxy.publicURL.String(); got != "https://models.example.com" {
-		t.Fatalf("public origin=%q", got)
+	if !strings.Contains(string(result), "inference:") || !strings.Contains(string(result), `src="/ml/qwen/assets/app.js"`) || response.ContentLength != int64(len(result)) {
+		t.Fatalf("unexpected HTML: %s", result)
+	}
+}
+
+// Техника: классы эквивалентности публичных адресов.
+func TestProxyPublicURL(t *testing.T) {
+	for _, address := range []string{"", "http://localhost:0", "http://localhost:65536", "http://localhost/path", "https://user:password@models.example.com", "http://localhost?x=y", "http://localhost?", "ftp://localhost", "http://bad_host", "http://-bad.localhost"} {
+		if _, err := NewProxyManager(config.ProxyConfig{PublicURL: address}); err == nil {
+			t.Errorf("accepted %q", address)
+		}
+	}
+	for _, address := range []string{"http://127.0.0.1:8082", "https://models.example.com:443/"} {
+		if _, err := NewProxyManager(config.ProxyConfig{PublicURL: address}); err != nil {
+			t.Errorf("rejected %q: %v", address, err)
+		}
+	}
+}
+
+// Техника: класс сжатого HTML-ответа.
+func TestProxyDecompressesGzipUI(t *testing.T) {
+	proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://localhost:8082"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment := domain.DeploymentState{ID: uuid.New(), Project: "ml", DeploymentName: "qwen"}
+	if err := proxy.Upsert(deployment, "http://model:8080"); err != nil {
+		t.Fatal(err)
+	}
+	transport := &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+		client, server := net.Pipe()
+		go func() {
+			defer server.Close()
+			req, err := http.ReadRequest(bufio.NewReader(server))
+			if err != nil {
+				return
+			}
+			if req.Header.Get("Accept-Encoding") != "gzip" {
+				fmt.Fprint(server, "HTTP/1.1 415 Unsupported Media Type\r\nContent-Length: 0\r\n\r\n")
+				return
+			}
+			var body bytes.Buffer
+			gz := gzip.NewWriter(&body)
+			_, _ = gz.Write([]byte("<html><head></head><body>model</body></html>"))
+			_ = gz.Close()
+			fmt.Fprintf(server, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\n\r\n", body.Len())
+			_, _ = server.Write(body.Bytes())
+		}()
+		return client, nil
+	}}
+	defer transport.CloseIdleConnections()
+	proxy.routes[routeKey{"ml", "qwen"}].handler.(*httputil.ReverseProxy).Transport = transport
+	req := httptest.NewRequest("GET", "http://localhost:8082/ml/qwen/", nil)
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	response := httptest.NewRecorder()
+	proxy.ServeHTTP(response, req)
+	if response.Code != 200 || !strings.Contains(response.Body.String(), "inference:") || !strings.Contains(response.Body.String(), "model") || response.Header().Get("Content-Encoding") != "" {
+		t.Fatalf("status=%d headers=%v body=%s", response.Code, response.Header(), response.Body.String())
+	}
+}
+
+// Техника: классы эквивалентности разрешённых и запрещённых хостов.
+func TestProxyAllowsConfiguredAndLocalHosts(t *testing.T) {
+	proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://192.168.50.139:8082"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment := domain.DeploymentState{ID: uuid.New(), Project: "ml", DeploymentName: "qwen"}
+	if err := proxy.Upsert(deployment, "http://model:8080"); err != nil {
+		t.Fatal(err)
+	}
+	proxy.routes[routeKey{"ml", "qwen"}].handler.(*httputil.ReverseProxy).Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+	})
+	for _, tc := range []struct {
+		host, origin string
+		status       int
+	}{
+		{"192.168.50.139:8082", "http://192.168.50.139:8082", 200},
+		{"localhost:8082", "http://localhost:8082", 200},
+		{"127.0.0.1:8082", "http://127.0.0.1:8082", 200},
+		{"localhost:8082", "http://192.168.50.139:8082", 403},
+		{"localhost:8083", "", 404}, {"evil.example:8082", "", 404},
+	} {
+		req := httptest.NewRequest("GET", "http://"+tc.host+"/ml/qwen/health", nil)
+		if tc.origin != "" {
+			req.Header.Set("Origin", tc.origin)
+		}
+		response := httptest.NewRecorder()
+		proxy.ServeHTTP(response, req)
+		if response.Code != tc.status {
+			t.Errorf("%s origin=%s: got %d, want %d", tc.host, tc.origin, response.Code, tc.status)
+		}
+	}
+}
+
+// Техника: классы эквивалентности корректного и некорректного endpoint.
+func TestProxyUpsertValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, endpoint string
+		wantErr        bool
+	}{{"valid", "http://model:8080", false}, {"invalid", "file:///secret", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://localhost:8082"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := domain.DeploymentState{ID: uuid.New(), Project: "demo", DeploymentName: "model"}
+			err = proxy.Upsert(state, tc.endpoint)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err=%v", err)
+			}
+		})
+	}
+}
+
+// Техника: классы эквивалентности сохранённого и отсутствующего deployment.
+func TestProxyPrune(t *testing.T) {
+	for _, keep := range []bool{true, false} {
+		t.Run(map[bool]string{true: "known", false: "missing"}[keep], func(t *testing.T) {
+			proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://localhost:8082"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := domain.DeploymentState{ID: uuid.New(), Project: "demo", DeploymentName: "model"}
+			if err = proxy.Upsert(state, "http://model:8080"); err != nil {
+				t.Fatal(err)
+			}
+			var states []domain.DeploymentState
+			if keep {
+				states = []domain.DeploymentState{state}
+			}
+			proxy.Prune(states)
+			_, exists := proxy.keys[state.ID]
+			if exists != keep {
+				t.Fatalf("exists=%v want=%v", exists, keep)
+			}
+		})
+	}
+}
+
+// Техника: классы эквивалентности существующего и отсутствующего ключа.
+func TestProxyRemove(t *testing.T) {
+	for _, existing := range []bool{true, false} {
+		t.Run(map[bool]string{true: "existing", false: "missing"}[existing], func(t *testing.T) {
+			proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://localhost:8082"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := domain.DeploymentState{ID: uuid.New(), Project: "demo", DeploymentName: "model"}
+			if err = proxy.Upsert(state, "http://model:8080"); err != nil {
+				t.Fatal(err)
+			}
+			id := uuid.New()
+			if existing {
+				id = state.ID
+			}
+			proxy.Remove(id)
+			_, exists := proxy.keys[state.ID]
+			if exists == existing {
+				t.Fatalf("exists=%v existing=%v", exists, existing)
+			}
+		})
 	}
 }

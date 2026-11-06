@@ -18,7 +18,11 @@ func (h *Handler) Router() http.Handler {
 	config.OpenAPIPath = apiPrefix + "/openapi"
 	config.SchemasPath = apiPrefix + "/schemas"
 	config.DocsRenderer = huma.DocsRendererSwaggerUI
+	config.Components.SecuritySchemes = map[string]*huma.SecurityScheme{
+		"bearerAuth": {Type: "http", Scheme: "bearer", BearerFormat: "JWT"},
+	}
 	api := humago.New(mux, config)
+	authenticated := []map[string][]string{{"bearerAuth": {}}}
 
 	huma.Register(api, huma.Operation{
 		OperationID:   "createModel",
@@ -26,6 +30,7 @@ func (h *Handler) Router() http.Handler {
 		Path:          apiPrefix + "/projects/{project}/models",
 		Summary:       "Создание модели",
 		Tags:          []string{"Model"},
+		Security:      authenticated,
 		DefaultStatus: http.StatusCreated,
 		Errors:        []int{http.StatusBadRequest, http.StatusConflict, http.StatusInternalServerError},
 	}, h.createModel)
@@ -37,7 +42,8 @@ func (h *Handler) Router() http.Handler {
 		Summary:     "Список моделей проекта с пагинацией",
 		Description: "Возвращает models и nextpagetoken. В nextpagetoken возвращается следующий offset или null на последней странице. По умолчанию limit=20, максимум 100.",
 		Tags:        []string{"Model"},
-		Errors:      []int{http.StatusBadRequest, http.StatusInternalServerError},
+		Security:    authenticated,
+		Errors:      []int{http.StatusBadRequest, http.StatusInternalServerError, http.StatusServiceUnavailable, http.StatusGatewayTimeout},
 	}, h.listModels)
 
 	huma.Register(api, huma.Operation{
@@ -46,6 +52,7 @@ func (h *Handler) Router() http.Handler {
 		Path:        apiPrefix + "/projects/{project}/models/{model_id}",
 		Summary:     "Получение модели",
 		Tags:        []string{"Model"},
+		Security:    authenticated,
 		Errors:      []int{http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError},
 	}, h.getModel)
 
@@ -55,6 +62,7 @@ func (h *Handler) Router() http.Handler {
 		Path:        apiPrefix + "/projects/{project}/models/{model_id}",
 		Summary:     "Частичное обновление модели",
 		Tags:        []string{"Model"},
+		Security:    authenticated,
 		Errors:      []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusInternalServerError},
 	}, h.updateModel)
 
@@ -63,20 +71,42 @@ func (h *Handler) Router() http.Handler {
 		Method:        http.MethodDelete,
 		Path:          apiPrefix + "/projects/{project}/models/{model_id}",
 		Summary:       "Удаление модели",
+		Description:   "Удаление разрешено, когда все deployment модели остановлены или завершились ошибкой.",
 		Tags:          []string{"Model"},
+		Security:      authenticated,
 		DefaultStatus: http.StatusNoContent,
-		Errors:        []int{http.StatusBadRequest, http.StatusNotFound, http.StatusInternalServerError},
+		Errors:        []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusInternalServerError},
 	}, h.deleteModel)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "getActiveDeployments", Method: http.MethodGet,
+		Path:        apiPrefix + "/projects/{project}/deployments",
+		Summary:     "Активные запуски моделей проекта",
+		Description: "Возвращает запускающиеся и запущенные deployment проекта.",
+		Tags:        []string{"Deployment"}, Security: authenticated,
+		Errors: []int{http.StatusBadRequest, http.StatusServiceUnavailable, http.StatusGatewayTimeout},
+	}, h.getActiveDeployments)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "getDeploymentsHistory",
+		Method:      http.MethodGet,
+		Path:        apiPrefix + "/projects/{project}/deployments/history",
+		Summary:     "История запусков моделей проекта",
+		Description: "Возвращает все запуски проекта во всех состояниях.",
+		Tags:        []string{"Deployment"}, Security: authenticated,
+		Errors: []int{http.StatusBadRequest, http.StatusServiceUnavailable, http.StatusGatewayTimeout},
+	}, h.getDeploymentsHistory)
 
 	huma.Register(api, huma.Operation{
 		OperationID:   "createDeployment",
 		Method:        http.MethodPost,
 		Path:          apiPrefix + "/projects/{project}/models/{model_id}/deployment",
-		Summary:       "Создание развёртывания модели",
-		Description:   "Создаёт развёртывание модели в проекте и запускает его с текущей спецификацией модели. Тело запроса не требуется. У модели может быть одно развёртывание: повторное создание возвращает 409. При успешном создании возвращает 201, состояние развёртывания и заголовок Location. Метод пока не реализован и возвращает 501.",
+		Summary:       "Запуск модели",
+		Description:   "Запускает существующую модель с её сохранённой спецификацией. Тело запроса не требуется. При успешном принятии возвращает 202, фактический ID deployment и его состояние.",
 		Tags:          []string{"Deployment"},
-		DefaultStatus: http.StatusCreated,
-		Errors:        []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusNotImplemented},
+		Security:      authenticated,
+		DefaultStatus: http.StatusAccepted,
+		Errors:        []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict, http.StatusServiceUnavailable, http.StatusGatewayTimeout},
 	}, h.createDeployment)
 
 	huma.Register(api, huma.Operation{
@@ -84,31 +114,29 @@ func (h *Handler) Router() http.Handler {
 		Method:      http.MethodGet,
 		Path:        apiPrefix + "/projects/{project}/models/{model_id}/deployment",
 		Summary:     "Получение состояния развёртывания",
-		Description: "Возвращает текущее состояние развёртывания модели: запуск, работа, остановка или ошибка. Если модель или её развёртывание не найдены в указанном проекте, возвращает 404. Метод пока не реализован и возвращает 501.",
+		Description: "Возвращает состояние deployment существующей модели. Если модели или deployment нет в указанном проекте, возвращает 404.",
 		Tags:        []string{"Deployment"},
-		Errors:      []int{http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable, http.StatusNotImplemented},
+		Security:    authenticated,
+		Errors:      []int{http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable, http.StatusGatewayTimeout},
 	}, h.getDeployment)
 
 	huma.Register(api, huma.Operation{
 		OperationID:   "deleteDeployment",
 		Method:        http.MethodDelete,
 		Path:          apiPrefix + "/projects/{project}/models/{model_id}/deployment",
-		Summary:       "Удаление развёртывания модели",
-		Description:   "Останавливает развёртывание модели и освобождает его ресурсы. Запись модели и её спецификация сохраняются. После завершения возвращает 204 без тела; повторное удаление отсутствующего развёртывания существующей модели также возвращает 204. Если сама модель не найдена в проекте, возвращает 404. Метод пока не реализован и возвращает 501.",
+		Summary:       "Остановка deployment модели",
+		Description:   "Запрашивает остановку последнего deployment, не удаляя модель. Возвращает 202 при принятой остановке или 204, если deployment уже остановлен либо отсутствует.",
 		Tags:          []string{"Deployment"},
-		DefaultStatus: http.StatusNoContent,
-		Errors:        []int{http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusNotImplemented},
+		Security:      authenticated,
+		DefaultStatus: http.StatusAccepted,
+		Responses: map[string]*huma.Response{
+			"204": {Description: "No Content"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable, http.StatusGatewayTimeout},
 	}, h.deleteDeployment)
 
-	huma.Register(api, huma.Operation{
-		OperationID: "listDeployments",
-		Method:      http.MethodGet,
-		Path:        apiPrefix + "/projects/{project}/deployments",
-		Summary:     "Список развёртываний проекта",
-		Description: "Возвращает существующие развёртывания моделей указанного проекта с их состояниями. Поддерживает offset и limit (по умолчанию 20, максимум 100). Порядок — по времени создания, затем по model_id. nextpagetoken содержит следующий offset либо null на последней странице. Модели без развёртывания в список не входят. Метод пока не реализован и возвращает 501.",
-		Tags:        []string{"Deployment"},
-		Errors:      []int{http.StatusBadRequest, http.StatusNotFound, http.StatusServiceUnavailable, http.StatusNotImplemented},
-	}, h.listDeployments)
-
-	return mux
+	if h.auth == nil {
+		return mux
+	}
+	return h.authorize(mux)
 }

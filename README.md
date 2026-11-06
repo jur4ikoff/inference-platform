@@ -52,9 +52,12 @@ make logs-inference     # Логи inference-service
 ```
 
 `make up-services` сначала поднимает PostgreSQL, ждёт готовности и применяет миграции,
-затем запускает приложения с `--no-deps`. При ошибке БД или миграций запуск
+затем запускает приложения, NGINX и Adminer с `--no-deps`. При ошибке БД или миграций запуск
 приложений не выполняется. Мониторинг запускается
 отдельно командой `make up-infra`. Для полного запуска используйте `make up`.
+
+Контейнеры настроены на автоматический перезапуск при сбое и запуске Docker.
+На macOS включите в Docker Desktop настройку **Settings → General → Start Docker Desktop when you sign in to your computer**. Сначала запустите стек командой `make up`: после этого Docker Desktop восстановит контейнеры при следующем запуске. Команда `make down` удаляет контейнеры, поэтому после неё для повторного запуска нужен `make up`.
 
 Inference-service входит в общий Compose-проект: `make ps`, `make logs`,
 `make down` и `make restart` также управляют им.
@@ -91,26 +94,30 @@ prek run --stage manual go-vet-inference-service --all-files
 Все HTTP-маршруты сервисов начинаются с `/api/v1`. Версия пути задаёт версию
 контракта API и не зависит от версии сборки сервиса.
 
-| Сервис | API напрямую | Swagger | OpenAPI YAML |
-| --- | --- | --- | --- |
-| user-service | `http://localhost:8080/api/v1` | `http://localhost:8080/api/v1/docs` | `http://localhost:8080/api/v1/openapi.yaml` |
-| model-service | `http://localhost:8081/api/v1` | `http://localhost:8081/api/v1/docs` | `http://localhost:8081/api/v1/openapi.yaml` |
+| Сервис | Маршрут через NGINX | OpenAPI JSON |
+| --- | --- | --- |
+| user-service | `/api/v1/auth`, `/api/v1/users`, `/api/v1/projects`, `/api/v1/roles` | `/api/v1/openapi-user.json` |
+| model-service | `/api/v1/projects/{project}/models`, `/api/v1/projects/{project}/deployments` | `/api/v1/openapi-model.json` |
 
-Сервисы доступны напрямую на указанных портах. Nginx не входит в общий запуск.
+NGINX доступен на `http://localhost:8000` (порт задаётся `NGINX_HTTP_PORT` в `infra/.env`).
+Он направляет `/api/v1/projects/{project}/models...` и `/api/v1/projects/{project}/deployments...` в model-service, а остальные `/api/v1/...` — в user-service. Авторизацию выполняют сами сервисы. Общий Swagger UI с переключением двух схем доступен на `/api/v1/docs`; схема user-service — `/api/v1/openapi-user.json`, model-service — `/api/v1/openapi-model.json`. Модельные API и UI доступны без JWT по `/inference/{project}/{deployment}/`; потоковые ответы не буферизуются.
 
-Для `auth_request` Nginx использует служебный `GET /internal/auth` в user-service.
-Маршрут отсутствует в Swagger и не публикуется через Nginx.
+Служебные страницы: `/management` содержит ссылки, `/status` показывает страницу со статистикой NGINX (исходные данные stub_status — `/status/data`), `/health` проверяет процесс NGINX, `/ready` возвращает JSON с готовностью user-service и model-service и HTTP-доступностью inference-service: первые два сервиса проверяют базу, а model-service также проверяет gRPC inference-service. Эти данные выводятся на странице `/status`. `/documentation` отображает этот README, его исходный Markdown доступен на `/documentation/raw`, `/` и `/reserved/` — приветственную страницу. На `/legacy` доступны бинарные файлы Linux-утилиты bootstrap-admin для архитектур amd64 и arm64; они собираются вместе с образом NGINX. Это утилита первоначального создания администратора, работающая напрямую с PostgreSQL, а не клиент API.
+
+Администрирование PostgreSQL через Adminer: `http://127.0.0.1:8083/admin/` на компьютере с сервером. Публичный `/admin` возвращает 403; Adminer не имеет собственного опубликованного порта. В форме выберите PostgreSQL и сервер `postgres`; имя БД, пользователь и пароль заданы в `infra/.env` (`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`). Доступ к 8083 ограничен loopback на уровне Docker; для удалённого администрирования используйте SSH-туннель, например `ssh -L 8083:127.0.0.1:8083 user@server`. PostgreSQL также публикуется только на `127.0.0.1:5432`.
+
+Локальный запуск: `make up` из корня репозитория. HTTP-порты сервисов не публикуются на хосте; доступ осуществляется через NGINX. Swagger UI версии 5.34.1 и его ресурсы размещены локально в `nginx/static/swagger`.
 
 Примеры: `POST /api/v1/auth/register`, `POST /api/v1/auth/login`,
 `PATCH /api/v1/users/{id}`, `GET /api/v1/projects/{project}/models`.
 Прежние HTTP-пути без `/api/v1` больше не обслуживаются.
 
 Регистрация: `POST /api/v1/auth/register`.
-Тело запроса: `{"firstname":"Иван","lastname":"Попов","email":"user@example.com","password":"password-12345"}`.
-Все четыре поля обязательны; имя и фамилия не могут быть пустыми или состоять из пробелов.
+Тело запроса: `{"login":"yuri","firstname":"Юрий","lastname":"Попов","email":"user@example.com","password":"password-12345"}`.
+Все пять полей обязательны; имя и фамилия не могут быть пустыми или состоять из пробелов.
 ID и даты создаются сервером. Роль относится к участию в проекте (`members.role_id`), а не к пользователю.
 Ответ `201` содержит `id`, `email`, `firstname`, `lastname`; повторный email возвращает `409`.
-Пароль должен содержать от 12 до 72 байт.
+Пароль должен содержать не менее 8 символов и не более 72 байт.
 
 Списки используют `offset` (от 0, по умолчанию 0) и `limit` (1–100, по умолчанию 20).
 `nextpagetoken` возвращается только в ответе и содержит следующий `offset`, а на последней
@@ -164,7 +171,7 @@ ID и даты создаются сервером. Роль относится 
 обращение к модели выполняется по ID.
 
 Создание модели: `POST /api/v1/projects/{project}/models`.
-Тело запроса: `{"name":"demo","description":"...","user_id":"...","spec":{"image":"my-model:latest"}}`.
+Тело запроса: `{"name":"demo","description":"...","username":"alice","spec":{"image":"my-model:latest"}}`.
 Проект задаётся только в пути; поле `project` в теле создания не принимается.
 
 Inference-service использует gRPC-контракт `inference.v1.InferenceService`.
@@ -216,3 +223,14 @@ Inference-service использует gRPC-контракт `inference.v1.Infer
 1. UserService выдаёт JWT; каждый сервис локально проверяет access JWT и права. Nginx отвечает за TLS и маршрутизацию.
 2. Изначально приложение проектируется под микросервисную архитектуру, но база данных единая для всех микросервисов для простоты разработки.
 3. Выбран архитектурный паттерн Control Plane и Data Plane
+
+
+## Запуск
+```bash
+make bootstrap-admin
+make up
+```
+
+http://localhost:8000/inference/<проект>/<имя-deployment>/
+
+`GET /healthz` (также `/healtz`) возвращает JSON со статусами сервисов и HTTP 503, если хотя бы один из основных сервисов недоступен. Для user-service, model-service, inference-service, NGINX и Adminer проверяется HTTP, для PostgreSQL и сервисов мониторинга — доступность TCP-порта. TCP-проверка не гарантирует готовность приложения; `/ready` отдельно проверяет готовность основных зависимостей.

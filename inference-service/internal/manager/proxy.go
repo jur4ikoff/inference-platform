@@ -1,8 +1,11 @@
 package manager
 
 import (
+	"bytes"
+	_ "embed"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -15,6 +18,9 @@ import (
 	"github.com/jur4ikoff/inference-service/internal/domain"
 	"github.com/rs/zerolog/log"
 )
+
+//go:embed proxy_ui.js
+var proxyUIScript string
 
 type routeKey struct{ project, deploymentName string }
 
@@ -37,17 +43,10 @@ func NewProxyManager(cfg config.ProxyConfig) (*ProxyManager, error) {
 		return nil, errors.New("PROXY_PUBLIC_URL must be an http(s) origin, for example http://localhost:8082")
 	}
 	host := strings.ToLower(publicURL.Hostname())
-	if len(host)+2*(63+1) > 253 {
-		return nil, errors.New("PROXY_PUBLIC_URL hostname is too long for deployment subdomains")
-	}
 	for _, label := range strings.Split(host, ".") {
 		if !domain.ValidDNSLabel(label) {
 			return nil, errors.New("PROXY_PUBLIC_URL must use a DNS hostname, for example localhost")
 		}
-	}
-	// IP addresses cannot be used as the parent of deployment subdomains.
-	if strings.Trim(host, "0123456789.") == "" {
-		return nil, errors.New("PROXY_PUBLIC_URL must use a DNS hostname instead of an IP address")
 	}
 	port := publicURL.Port()
 	if port != "" {
@@ -96,12 +95,25 @@ func (r *ProxyManager) Upsert(deployment domain.DeploymentState, endpoint string
 		Rewrite: func(request *httputil.ProxyRequest) {
 			request.SetURL(target)
 			request.SetXForwarded()
-			request.Out.Header.Del("X-Forwarded-Prefix")
+			request.Out.Header.Set("X-Forwarded-Prefix", "/"+key.project+"/"+key.deploymentName)
+			// Let Go request and transparently decompress gzip for UI rewriting.
+			request.Out.Header.Del("Accept-Encoding")
+			request.Out.Header.Del("If-None-Match")
+			request.Out.Header.Del("If-Modified-Since")
 		},
 		ModifyResponse: func(response *http.Response) error {
 			for name := range response.Header {
 				if strings.HasPrefix(strings.ToLower(name), "access-control-") {
 					response.Header.Del(name)
+				}
+			}
+			if strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/html") && response.StatusCode == http.StatusOK && response.Request.Method != http.MethodHead {
+				externalPrefix := ""
+				if response.Request.Header.Get("X-Inference-Proxy-Prefix") == "/inference" {
+					externalPrefix = "/inference"
+				}
+				if err := prepareUIResponse(response, externalPrefix+"/"+key.project+"/"+key.deploymentName+"/"); err != nil {
+					return err
 				}
 			}
 			response.Header.Set("Cross-Origin-Resource-Policy", "same-origin")
@@ -153,28 +165,78 @@ func (r *ProxyManager) ServeHTTP(w http.ResponseWriter, request *http.Request) {
 	} else {
 		host = strings.TrimSuffix(host, ":443")
 	}
-	origin := r.publicURL.Scheme + "://" + host
-	if origins := request.Header.Values("Origin"); len(origins) != 0 && (len(origins) != 1 || origins[0] != origin) {
+	localhost := "localhost"
+	loopback := "127.0.0.1"
+	if port := r.publicURL.Port(); port != "" {
+		localhost += ":" + port
+		loopback += ":" + port
+	}
+	if host != r.publicURL.Host && host != localhost && host != loopback {
+		http.NotFound(w, request)
+		return
+	}
+	if origins := request.Header.Values("Origin"); len(origins) != 0 && (len(origins) != 1 || origins[0] != r.publicURL.Scheme+"://"+host) {
 		http.Error(w, "cross-origin model requests are not allowed", http.StatusForbidden)
 		return
 	}
-	if host == r.publicURL.Host {
+	parts := strings.SplitN(strings.TrimPrefix(request.URL.Path, "/"), "/", 3)
+	if len(parts) < 2 || !domain.ValidDNSLabel(parts[0]) || !domain.ValidDNSLabel(parts[1]) {
 		http.NotFound(w, request)
 		return
 	}
-	// Only the configured suffix and port are accepted. Forwarded host headers are not trusted.
-	selector, ok := strings.CutSuffix(host, "."+r.publicURL.Host)
-	project, deploymentName, separated := strings.Cut(selector, ".")
-	if !ok || !separated || !domain.ValidDNSLabel(project) || !domain.ValidDNSLabel(deploymentName) {
-		http.NotFound(w, request)
-		return
-	}
+	key := routeKey{parts[0], parts[1]}
 	r.mu.RLock()
-	backend, exists := r.routes[routeKey{project, deploymentName}]
+	backend, exists := r.routes[key]
 	r.mu.RUnlock()
-	if !exists || request.URL.Path == "/proxy" || strings.HasPrefix(request.URL.Path, "/proxy/") {
+	if !exists {
 		http.NotFound(w, request)
 		return
 	}
-	backend.handler.ServeHTTP(w, request)
+	prefix := "/" + key.project + "/" + key.deploymentName
+	if len(parts) == 2 {
+		location := prefix + "/"
+		if request.URL.RawQuery != "" {
+			location += "?" + request.URL.RawQuery
+		}
+		http.Redirect(w, request, location, http.StatusPermanentRedirect)
+		return
+	}
+	http.StripPrefix(prefix, backend.handler).ServeHTTP(w, request)
+}
+
+func prepareUIResponse(response *http.Response, prefix string) error {
+	if response.Header.Get("Content-Security-Policy") != "" || response.Header.Get("Content-Security-Policy-Report-Only") != "" {
+		return errors.New("model UI content security policy prevents safe bootstrap injection")
+	}
+	if encoding := response.Header.Get("Content-Encoding"); encoding != "" && encoding != "identity" {
+		return fmt.Errorf("unsupported UI content encoding: %s", encoding)
+	}
+	const maxUIBytes = 20 << 20
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxUIBytes+1))
+	if err != nil {
+		return err
+	}
+	if len(body) > maxUIBytes {
+		return errors.New("model UI exceeds size limit")
+	}
+	_ = response.Body.Close()
+	// The bootstrap must run before the UI opens IndexedDB or issues API calls.
+	tag := []byte("<script>window.__modelProxyPrefix=" + strconv.Quote(prefix) + ";" + proxyUIScript + "</script>")
+	lower := bytes.ToLower(body)
+	head := bytes.Index(lower, []byte("<head>"))
+	if head < 0 {
+		return errors.New("model UI has no head element")
+	}
+	head += len("<head>")
+	body = append(append(append([]byte{}, body[:head]...), tag...), body[head:]...)
+	// Root-relative static assets must stay under the deployment prefix.
+	body = bytes.ReplaceAll(body, []byte(`src="/`), []byte(`src="`+prefix))
+	body = bytes.ReplaceAll(body, []byte(`href="/`), []byte(`href="`+prefix))
+	response.Body = io.NopCloser(bytes.NewReader(body))
+	response.ContentLength = int64(len(body))
+	response.Header.Set("Content-Length", strconv.Itoa(len(body)))
+	response.Header.Del("ETag")
+	response.Header.Del("Last-Modified")
+	response.Header.Set("Cache-Control", "no-store")
+	return nil
 }

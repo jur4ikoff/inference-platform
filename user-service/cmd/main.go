@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jur4ikoff/user-service/internal/api"
 	"github.com/jur4ikoff/user-service/internal/api/handler"
 	"github.com/jur4ikoff/user-service/internal/config"
@@ -19,13 +21,19 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "user-service failed: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	cfg, err := config.Load()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "user-service startup failed: load configuration: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("load configuration: %w", err)
 	}
 
 	logger, err := infrastructure.NewLogger(
@@ -35,13 +43,12 @@ func main() {
 		cfg.Version,
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "user-service startup failed: create logger: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("create logger: %w", err)
 	}
 
 	shutdownTracing, err := infrastructure.InitTracing(ctx, cfg)
 	if err != nil {
-		logger.Fatal().Err(err).Msg("initialize tracing")
+		return fmt.Errorf("initialize tracing: %w", err)
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -61,9 +68,12 @@ func main() {
 		cfg.DatabaseMinConns,
 	)
 	if err != nil {
-		logger.Fatal().Err(err).Msg("connect to PostgreSQL")
+		return fmt.Errorf("connect to PostgreSQL: %w", err)
 	}
 	defer pool.Close()
+	if err := checkSchema(startupCtx, pool); err != nil {
+		return fmt.Errorf("check PostgreSQL schema: %w", err)
+	}
 
 	logger.Info().
 		Str("address", cfg.HTTPAddr).
@@ -72,24 +82,56 @@ func main() {
 		Msg("user service configuration loaded")
 
 	users := repository.NewUserRepository(pool)
+	privateKey, err := infrastructure.LoadRSAPrivateKey(cfg.JWTPrivateKeyPath)
+	if err != nil {
+		return fmt.Errorf("load JWT private key: %w", err)
+	}
+	tokens, err := infrastructure.NewTokenManager(privateKey, cfg.JWTKeyID, cfg.JWTIssuer, cfg.JWTAudience)
+	if err != nil {
+		return fmt.Errorf("initialize JWT signer: %w", err)
+	}
 	userService := service.NewUserService(
 		users,
-		infrastructure.NewPasswordHasher(cfg.BcryptCost),
-		infrastructure.NewTokenManager(cfg.JWTSecret, cfg.JWTIssuer),
+		infrastructure.NewPasswordHasher(cfg.PasswordWorkers),
+		tokens,
 		infrastructure.IDGenerator{},
 		infrastructure.Clock{},
 		cfg.AccessTokenTTL,
 	)
+	projects := repository.NewProjectRepository(pool)
 	router := api.NewRouter(
-		handler.NewAuthHandler(userService),
-		handler.NewUserHandler(userService),
-		handler.NewProjectHandler(service.NewProjectService(repository.NewProjectRepository(pool))),
+		handler.NewAuthHandler(userService, service.NewProjectTokenService(projects, tokens, cfg.AccessTokenTTL, infrastructure.Clock{})),
+		handler.NewUserHandler(userService, service.NewPlatformRoleService(users)),
+		handler.NewProjectHandler(service.NewProjectService(projects)),
 		handler.NewRoleHandler(service.NewRoleService(repository.NewRoleRepository(pool))),
 		cfg.Version,
 	)
+	var ready atomic.Bool
+	ready.Store(true)
+	root := http.NewServeMux()
+	root.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	root.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		if !ready.Load() {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		checkCtx, cancel := context.WithTimeout(r.Context(), time.Second)
+		defer cancel()
+		if err := pool.Ping(checkCtx); err != nil {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	root.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost || r.Method == http.MethodPatch || r.Method == http.MethodPut {
+			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		}
+		router.ServeHTTP(w, r)
+	}))
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           http.TimeoutHandler(router, cfg.RequestTimeout, "request timed out"),
+		Handler:           http.TimeoutHandler(root, cfg.RequestTimeout, "request timed out"),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       cfg.RequestTimeout,
 		WriteTimeout:      cfg.RequestTimeout,
@@ -104,6 +146,7 @@ func main() {
 
 	select {
 	case <-ctx.Done():
+		ready.Store(false)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
@@ -111,7 +154,19 @@ func main() {
 		}
 	case err := <-serverErrors:
 		if !errors.Is(err, http.ErrServerClosed) {
-			logger.Fatal().Err(err).Msg("run HTTP server")
+			return fmt.Errorf("run HTTP server: %w", err)
 		}
 	}
+	return nil
+}
+
+func checkSchema(ctx context.Context, pool *pgxpool.Pool) error {
+	var exists bool
+	if err := pool.QueryRow(ctx, "SELECT to_regclass('users') IS NOT NULL AND to_regclass('roles') IS NOT NULL AND to_regclass('projects') IS NOT NULL").Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return errors.New("required UserService tables are missing")
+	}
+	return nil
 }

@@ -2,20 +2,23 @@ package repository_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jur4ikoff/model-service/internal/domain"
 	"github.com/jur4ikoff/model-service/internal/repository"
 	"github.com/jur4ikoff/model-service/internal/service"
+	"github.com/jur4ikoff/model-service/internal/testutil"
 )
 
+// Техника: классы эквивалентности идентификаторов моделей и проектов.
 func TestModelsAreIdentifiedByIDWithinProject(t *testing.T) {
 	databaseURL := os.Getenv("MODEL_TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -42,18 +45,14 @@ func TestModelsAreIdentifiedByIDWithinProject(t *testing.T) {
 		updated_at TIMESTAMPTZ NOT NULL,
 		name TEXT NOT NULL,
 		description TEXT NOT NULL,
-		user_id UUID NOT NULL,
+		username TEXT NOT NULL,
 		project TEXT NOT NULL,
 		spec JSONB NOT NULL
 	)`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	migration, err := os.ReadFile("../../../infra/postgres/migrations/000006_unique_model_name_per_project.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err = pool.Exec(ctx, strings.ReplaceAll(string(migration), "-- ", "")); err != nil {
+	if _, err = pool.Exec(ctx, `CREATE UNIQUE INDEX models_project_name_key ON models (project, name)`); err != nil {
 		t.Fatal(err)
 	}
 	runtime := &runtimeSpy{}
@@ -62,7 +61,7 @@ func TestModelsAreIdentifiedByIDWithinProject(t *testing.T) {
 	create := func(project, name string) domain.Model {
 		t.Helper()
 		model, err := models.Create(ctx, service.CreateModelInput{
-			Name: name, Project: project, UserID: uuid.NewString(), Spec: json.RawMessage(`{}`),
+			Name: name, Project: project, Username: uuid.NewString(), Spec: validModelSpec(),
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -79,7 +78,7 @@ func TestModelsAreIdentifiedByIDWithinProject(t *testing.T) {
 		}
 	}
 	if _, err := models.Create(ctx, service.CreateModelInput{
-		Name: "demo", Project: projectA, UserID: uuid.NewString(), Spec: json.RawMessage(`{}`),
+		Name: "demo", Project: projectA, Username: uuid.NewString(), Spec: validModelSpec(),
 	}); !errors.Is(err, domain.ErrModelAlreadyExists) {
 		t.Fatalf("duplicate name in project: %v", err)
 	}
@@ -144,6 +143,13 @@ func TestModelsAreIdentifiedByIDWithinProject(t *testing.T) {
 	}
 }
 
+func validModelSpec() domain.ModelSpec {
+	return domain.ModelSpec{
+		ProviderType:        domain.ProviderHuggingFace,
+		ProviderHuggingFace: &domain.HuggingFaceProvider{Repo: "org/model"},
+	}
+}
+
 type runtimeSpy struct {
 	model domain.Model
 }
@@ -151,4 +157,143 @@ type runtimeSpy struct {
 func (r *runtimeSpy) Start(_ context.Context, model domain.Model) error {
 	r.model = model
 	return nil
+}
+
+func (*runtimeSpy) CreateDeployment(context.Context, domain.Model) (domain.Deployment, error) {
+	return domain.Deployment{}, nil
+}
+
+func (*runtimeSpy) GetDeployment(context.Context, domain.Model) (domain.Deployment, error) {
+	return domain.Deployment{}, nil
+}
+
+func (*runtimeSpy) GetDeploymentsHistory(context.Context, string) ([]domain.Deployment, error) {
+	return nil, nil
+}
+
+func (*runtimeSpy) StopDeployment(context.Context, domain.Deployment) error {
+	return nil
+}
+
+func (*runtimeSpy) GetActiveDeployments(context.Context, string) ([]domain.Deployment, error) {
+	return nil, nil
+}
+
+// Техника: классы эквивалентности результата запроса и ошибки зависимости.
+func TestModelRepositoryUnit(t *testing.T) {
+	for _, method := range []string{"create", "get", "list", "update", "delete"} {
+		for _, scenario := range []string{"success", "missing", "database error"} {
+			t.Run(method+"/"+scenario, func(t *testing.T) {
+				model := testutil.NewModelBuilder().WithName("encoded-model").Build()
+				id := uuid.MustParse(model.ID)
+				saved := []any{pgtype.UUID{Bytes: id, Valid: true}, pgtype.Timestamptz{Time: model.CreatedAt, Valid: true}, pgtype.Timestamptz{Time: model.UpdatedAt, Valid: true}, model.Name, model.Description, model.Username, model.Project, []byte(`{"provider_type":"HUGGING_FACE","provider_hugging_face":{"repo":"org/model"}}`)}
+				failure := errors.New("database error")
+				var rowErr error
+				if scenario == "missing" {
+					rowErr = pgx.ErrNoRows
+				}
+				if scenario == "database error" {
+					rowErr = failure
+				}
+				calls := 0
+				db := &testutil.MockDBTX{
+					QueryRowFunc: func(context.Context, string, ...interface{}) pgx.Row {
+						calls++
+						return testutil.Row{Values: saved, Err: rowErr}
+					},
+					QueryFunc: func(context.Context, string, ...interface{}) (pgx.Rows, error) {
+						calls++
+						if scenario == "database error" {
+							return nil, failure
+						}
+						rows := &testutil.Rows{}
+						if scenario == "success" {
+							rows.Data = [][]any{saved}
+						}
+						return rows, nil
+					},
+					ExecFunc: func(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+						calls++
+						if scenario == "database error" {
+							return pgconn.CommandTag{}, failure
+						}
+						if scenario == "missing" {
+							return pgconn.NewCommandTag("DELETE 0"), nil
+						}
+						return pgconn.NewCommandTag("DELETE 1"), nil
+					},
+				}
+				repo := repository.NewModelRepository(db)
+				ctx := context.Background()
+				var err error
+				var got domain.Model
+				switch method {
+				case "create":
+					got, err = repo.Create(ctx, model)
+				case "get":
+					got, err = repo.Get(ctx, model.Project, model.ID)
+				case "list":
+					var rows []domain.Model
+					rows, err = repo.List(ctx, model.Project, 0, 10)
+					if err == nil && ((scenario == "success" && len(rows) != 1) || (scenario == "missing" && len(rows) != 0)) {
+						t.Fatalf("rows=%+v", rows)
+					}
+				case "update":
+					got, err = repo.Update(ctx, model.Project, model.ID, nil, nil, nil, time.Now())
+				case "delete":
+					err = repo.Delete(ctx, model.Project, model.ID)
+				}
+				if calls != 1 {
+					t.Fatalf("database calls=%d", calls)
+				}
+				if scenario == "database error" && !errors.Is(err, failure) {
+					t.Fatalf("err=%v", err)
+				}
+				if scenario == "missing" && method != "list" {
+					want := domain.ErrModelNotFound
+					if method == "create" {
+						want = pgx.ErrNoRows
+					}
+					if !errors.Is(err, want) {
+						t.Fatalf("err=%v", err)
+					}
+				}
+				if scenario == "success" && (err != nil || (method != "delete" && method != "list" && got.ID != model.ID)) {
+					t.Fatalf("model=%+v err=%v", got, err)
+				}
+			})
+		}
+	}
+}
+
+// Техника: классы эквивалентности ошибок при чтении набора строк.
+func TestModelListReadErrors(t *testing.T) {
+	for _, scenario := range []string{"scan", "iteration"} {
+		t.Run(scenario, func(t *testing.T) {
+			failure := errors.New("read failed")
+			rows := &testutil.Rows{Data: [][]any{{}}}
+			if scenario == "scan" {
+				rows.ScanErr = failure
+			} else {
+				rows.Data = nil
+				rows.IterErr = failure
+			}
+			db := &testutil.MockDBTX{QueryFunc: func(context.Context, string, ...interface{}) (pgx.Rows, error) { return rows, nil }}
+			_, err := repository.NewModelRepository(db).List(context.Background(), "demo", 0, 10)
+			if !errors.Is(err, failure) || !rows.Closed {
+				t.Fatalf("err=%v closed=%v", err, rows.Closed)
+			}
+		})
+	}
+}
+
+// Техника: класс конфликта уникального имени модели.
+func TestModelCreateDuplicate(t *testing.T) {
+	db := &testutil.MockDBTX{QueryRowFunc: func(context.Context, string, ...interface{}) pgx.Row {
+		return testutil.Row{Err: &pgconn.PgError{Code: "23505", ConstraintName: "models_project_name_key"}}
+	}}
+	_, err := repository.NewModelRepository(db).Create(context.Background(), testutil.ModelMother{}.HuggingFace())
+	if !errors.Is(err, domain.ErrModelAlreadyExists) {
+		t.Fatalf("err=%v", err)
+	}
 }

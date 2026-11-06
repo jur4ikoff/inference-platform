@@ -27,6 +27,27 @@ psql -c '
     );
 '
 
+# The initial, pre-release migration set was consolidated into six baseline
+# migrations. Local databases that recorded the old filenames keep their
+# schema; only their bookkeeping is translated before the normal loop.
+log "Normalizing pre-release migration history"
+psql -c "
+    DELETE FROM schema_migrations
+    WHERE version IN (
+        '000006_unique_model_name_per_project.sql',
+        '000007_align_users_with_user_service.sql',
+        '000008_remove_user_role.sql',
+        '000009_add_role_permissions.sql',
+        '000010_remove_model_interaction_permission.sql',
+        '000012_model_username.sql',
+        '000013_audit_event_details.sql',
+        '000014_models_created_by.sql'
+    );
+    UPDATE schema_migrations
+    SET version = '000006_create_deployments_table.sql'
+    WHERE version = '000011_create_deployments_table.sql';
+"
+
 for migration in "$migrations_dir"/*.sql; do
     [ -f "$migration" ] || continue
 
@@ -40,12 +61,12 @@ for migration in "$migrations_dir"/*.sql; do
 
     started_at=$(date +%s)
     log "Applying: $version"
-    psql -a -e < "$migration"
+    { cat "$migration"; printf "\nINSERT INTO schema_migrations (version) VALUES ('%s');\n" "$version"; } | psql -1
     finished_at=$(date +%s)
     log "SQL completed: $version ($((finished_at - started_at))s)"
 
     log "Saving migration version: $version"
-    psql -c "INSERT INTO schema_migrations (version) VALUES ('$version')"
+
     log "Migration applied: $version"
 done
 

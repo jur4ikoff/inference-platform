@@ -9,6 +9,7 @@ package inferencev1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -175,6 +176,8 @@ type Deployment struct {
 	DeploymentName string                 `protobuf:"bytes,7,opt,name=deployment_name,json=deploymentName,proto3" json:"deployment_name,omitempty"`
 	Status         ModelStatus            `protobuf:"varint,8,opt,name=status,proto3,enum=inference.v1.ModelStatus" json:"status,omitempty"`
 	Spec           *DeploymentSpec        `protobuf:"bytes,9,opt,name=spec,proto3" json:"spec,omitempty"`
+	StartedAt      *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	UpdatedAt      *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -272,11 +275,25 @@ func (x *Deployment) GetSpec() *DeploymentSpec {
 	return nil
 }
 
+func (x *Deployment) GetStartedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.StartedAt
+	}
+	return nil
+}
+
+func (x *Deployment) GetUpdatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.UpdatedAt
+	}
+	return nil
+}
+
 type StartDeploymentRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Project        string                 `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
 	ModelId        string                 `protobuf:"bytes,2,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
-	UserId         string                 `protobuf:"bytes,3,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Username       string                 `protobuf:"bytes,3,opt,name=username,proto3" json:"username,omitempty"`
 	DeploymentName string                 `protobuf:"bytes,4,opt,name=deployment_name,json=deploymentName,proto3" json:"deployment_name,omitempty"`
 	Spec           *DeploymentSpec        `protobuf:"bytes,6,opt,name=spec,proto3" json:"spec,omitempty"`
 	unknownFields  protoimpl.UnknownFields
@@ -327,9 +344,9 @@ func (x *StartDeploymentRequest) GetModelId() string {
 	return ""
 }
 
-func (x *StartDeploymentRequest) GetUserId() string {
+func (x *StartDeploymentRequest) GetUsername() string {
 	if x != nil {
-		return x.UserId
+		return x.Username
 	}
 	return ""
 }
@@ -972,14 +989,14 @@ var File_inference_v1_inference_proto protoreflect.FileDescriptor
 
 const file_inference_v1_inference_proto_rawDesc = "" +
 	"\n" +
-	"\x1cinference/v1/inference.proto\x12\finference.v1\"\xc2\x01\n" +
+	"\x1cinference/v1/inference.proto\x12\finference.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc2\x01\n" +
 	"\n" +
 	"ModelState\x12\x19\n" +
 	"\bmodel_id\x18\x01 \x01(\tR\amodelId\x12\x18\n" +
 	"\aproject\x18\x02 \x01(\tR\aproject\x12'\n" +
 	"\x0fdeployment_name\x18\x03 \x01(\tR\x0edeploymentName\x121\n" +
 	"\x06status\x18\x04 \x01(\x0e2\x19.inference.v1.ModelStatusR\x06status\x12#\n" +
-	"\rdeployment_id\x18\x05 \x01(\tR\fdeploymentId\"\xc7\x02\n" +
+	"\rdeployment_id\x18\x05 \x01(\tR\fdeploymentId\"\xbd\x03\n" +
 	"\n" +
 	"Deployment\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12!\n" +
@@ -990,11 +1007,16 @@ const file_inference_v1_inference_proto_rawDesc = "" +
 	"\x04name\x18\x06 \x01(\tR\x04name\x12'\n" +
 	"\x0fdeployment_name\x18\a \x01(\tR\x0edeploymentName\x121\n" +
 	"\x06status\x18\b \x01(\x0e2\x19.inference.v1.ModelStatusR\x06status\x120\n" +
-	"\x04spec\x18\t \x01(\v2\x1c.inference.v1.DeploymentSpecR\x04spec\"\xc7\x01\n" +
+	"\x04spec\x18\t \x01(\v2\x1c.inference.v1.DeploymentSpecR\x04spec\x129\n" +
+	"\n" +
+	"started_at\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x129\n" +
+	"\n" +
+	"updated_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"\xca\x01\n" +
 	"\x16StartDeploymentRequest\x12\x18\n" +
 	"\aproject\x18\x01 \x01(\tR\aproject\x12\x19\n" +
-	"\bmodel_id\x18\x02 \x01(\tR\amodelId\x12\x17\n" +
-	"\auser_id\x18\x03 \x01(\tR\x06userId\x12'\n" +
+	"\bmodel_id\x18\x02 \x01(\tR\amodelId\x12\x1a\n" +
+	"\busername\x18\x03 \x01(\tR\busername\x12'\n" +
 	"\x0fdeployment_name\x18\x04 \x01(\tR\x0edeploymentName\x120\n" +
 	"\x04spec\x18\x06 \x01(\v2\x1c.inference.v1.DeploymentSpecR\x04specJ\x04\b\x05\x10\x06\"\x8c\x01\n" +
 	"\x0eDeploymentSpec\x12#\n" +
@@ -1083,35 +1105,38 @@ var file_inference_v1_inference_proto_goTypes = []any{
 	(*ListDeploymentsResponse)(nil),     // 14: inference.v1.ListDeploymentsResponse
 	(*ListAllDeploymentsRequest)(nil),   // 15: inference.v1.ListAllDeploymentsRequest
 	(*ListAllDeploymentsResponse)(nil),  // 16: inference.v1.ListAllDeploymentsResponse
+	(*timestamppb.Timestamp)(nil),       // 17: google.protobuf.Timestamp
 }
 var file_inference_v1_inference_proto_depIdxs = []int32{
 	0,  // 0: inference.v1.ModelState.status:type_name -> inference.v1.ModelStatus
 	0,  // 1: inference.v1.Deployment.status:type_name -> inference.v1.ModelStatus
 	4,  // 2: inference.v1.Deployment.spec:type_name -> inference.v1.DeploymentSpec
-	4,  // 3: inference.v1.StartDeploymentRequest.spec:type_name -> inference.v1.DeploymentSpec
-	5,  // 4: inference.v1.DeploymentSpec.provider_hugging_face:type_name -> inference.v1.HuggingFaceProvider
-	1,  // 5: inference.v1.StartDeploymentResponse.state:type_name -> inference.v1.ModelState
-	2,  // 6: inference.v1.GetDeploymentByIDResponse.deployment:type_name -> inference.v1.Deployment
-	2,  // 7: inference.v1.GetDeploymentByNameResponse.deployment:type_name -> inference.v1.Deployment
-	2,  // 8: inference.v1.ListDeploymentsResponse.deployments:type_name -> inference.v1.Deployment
-	2,  // 9: inference.v1.ListAllDeploymentsResponse.deployments:type_name -> inference.v1.Deployment
-	3,  // 10: inference.v1.InferenceService.StartDeployment:input_type -> inference.v1.StartDeploymentRequest
-	7,  // 11: inference.v1.InferenceService.StopDeployment:input_type -> inference.v1.StopDeploymentRequest
-	9,  // 12: inference.v1.InferenceService.GetDeploymentByID:input_type -> inference.v1.GetDeploymentByIDRequest
-	11, // 13: inference.v1.InferenceService.GetDeploymentByName:input_type -> inference.v1.GetDeploymentByNameRequest
-	13, // 14: inference.v1.InferenceService.ListDeployments:input_type -> inference.v1.ListDeploymentsRequest
-	15, // 15: inference.v1.InferenceService.ListAllDeployments:input_type -> inference.v1.ListAllDeploymentsRequest
-	6,  // 16: inference.v1.InferenceService.StartDeployment:output_type -> inference.v1.StartDeploymentResponse
-	8,  // 17: inference.v1.InferenceService.StopDeployment:output_type -> inference.v1.StopDeploymentResponse
-	10, // 18: inference.v1.InferenceService.GetDeploymentByID:output_type -> inference.v1.GetDeploymentByIDResponse
-	12, // 19: inference.v1.InferenceService.GetDeploymentByName:output_type -> inference.v1.GetDeploymentByNameResponse
-	14, // 20: inference.v1.InferenceService.ListDeployments:output_type -> inference.v1.ListDeploymentsResponse
-	16, // 21: inference.v1.InferenceService.ListAllDeployments:output_type -> inference.v1.ListAllDeploymentsResponse
-	16, // [16:22] is the sub-list for method output_type
-	10, // [10:16] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	17, // 3: inference.v1.Deployment.started_at:type_name -> google.protobuf.Timestamp
+	17, // 4: inference.v1.Deployment.updated_at:type_name -> google.protobuf.Timestamp
+	4,  // 5: inference.v1.StartDeploymentRequest.spec:type_name -> inference.v1.DeploymentSpec
+	5,  // 6: inference.v1.DeploymentSpec.provider_hugging_face:type_name -> inference.v1.HuggingFaceProvider
+	1,  // 7: inference.v1.StartDeploymentResponse.state:type_name -> inference.v1.ModelState
+	2,  // 8: inference.v1.GetDeploymentByIDResponse.deployment:type_name -> inference.v1.Deployment
+	2,  // 9: inference.v1.GetDeploymentByNameResponse.deployment:type_name -> inference.v1.Deployment
+	2,  // 10: inference.v1.ListDeploymentsResponse.deployments:type_name -> inference.v1.Deployment
+	2,  // 11: inference.v1.ListAllDeploymentsResponse.deployments:type_name -> inference.v1.Deployment
+	3,  // 12: inference.v1.InferenceService.StartDeployment:input_type -> inference.v1.StartDeploymentRequest
+	7,  // 13: inference.v1.InferenceService.StopDeployment:input_type -> inference.v1.StopDeploymentRequest
+	9,  // 14: inference.v1.InferenceService.GetDeploymentByID:input_type -> inference.v1.GetDeploymentByIDRequest
+	11, // 15: inference.v1.InferenceService.GetDeploymentByName:input_type -> inference.v1.GetDeploymentByNameRequest
+	13, // 16: inference.v1.InferenceService.ListDeployments:input_type -> inference.v1.ListDeploymentsRequest
+	15, // 17: inference.v1.InferenceService.ListAllDeployments:input_type -> inference.v1.ListAllDeploymentsRequest
+	6,  // 18: inference.v1.InferenceService.StartDeployment:output_type -> inference.v1.StartDeploymentResponse
+	8,  // 19: inference.v1.InferenceService.StopDeployment:output_type -> inference.v1.StopDeploymentResponse
+	10, // 20: inference.v1.InferenceService.GetDeploymentByID:output_type -> inference.v1.GetDeploymentByIDResponse
+	12, // 21: inference.v1.InferenceService.GetDeploymentByName:output_type -> inference.v1.GetDeploymentByNameResponse
+	14, // 22: inference.v1.InferenceService.ListDeployments:output_type -> inference.v1.ListDeploymentsResponse
+	16, // 23: inference.v1.InferenceService.ListAllDeployments:output_type -> inference.v1.ListAllDeploymentsResponse
+	18, // [18:24] is the sub-list for method output_type
+	12, // [12:18] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_inference_v1_inference_proto_init() }

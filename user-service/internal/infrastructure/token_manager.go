@@ -1,95 +1,86 @@
 package infrastructure
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
-	"strings"
+	"os"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jur4ikoff/user-service/internal/domain"
 	"github.com/jur4ikoff/user-service/internal/service"
+	"github.com/jur4ikoff/utils/authjwt"
 )
 
-// TokenManager creates and validates compact HS256 JWT access tokens.
+// TokenManager issues and validates RS256 access tokens. Only this service is
+// given the private key; consumers use PublicJWKSet instead.
 type TokenManager struct {
-	secret []byte
-	issuer string
-	now    func() time.Time
+	private  *rsa.PrivateKey
+	issuer   string
+	audience string
+	kid      string
+	now      func() time.Time
 }
 
-func NewTokenManager(secret, issuer string) *TokenManager {
-	return &TokenManager{secret: []byte(secret), issuer: issuer, now: time.Now}
+func NewTokenManager(private *rsa.PrivateKey, kid, issuer, audience string) (*TokenManager, error) {
+	if private == nil || private.N == nil || private.Size() < 256 || kid == "" || issuer == "" || audience == "" {
+		return nil, errors.New("invalid JWT signing configuration")
+	}
+	return &TokenManager{private: private, kid: kid, issuer: issuer, audience: audience, now: time.Now}, nil
 }
 
-func (m *TokenManager) CreateAccessToken(userID domain.UserID, expiresAt time.Time) (string, error) {
-	header, err := json.Marshal(struct {
-		Algorithm string `json:"alg"`
-		Type      string `json:"typ"`
-	}{Algorithm: "HS256", Type: "JWT"})
+func LoadRSAPrivateKey(path string) (*rsa.PrivateKey, error) {
+	pemBytes, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	payload, err := json.Marshal(struct {
-		Subject string `json:"sub"`
-		Issuer  string `json:"iss"`
-		Expires int64  `json:"exp"`
-	}{Subject: string(userID), Issuer: m.issuer, Expires: expiresAt.Unix()})
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, errors.New("JWT private key is not PEM")
+	}
+	if key, parseErr := x509.ParsePKCS1PrivateKey(block.Bytes); parseErr == nil {
+		return key, nil
+	}
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 	if err != nil {
-		return "", err
+		return nil, errors.New("invalid JWT private key")
 	}
+	rsaKey, ok := key.(*rsa.PrivateKey)
+	if !ok {
+		return nil, errors.New("JWT private key is not RSA")
+	}
+	return rsaKey, nil
+}
 
-	unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload)
-	return unsigned + "." + base64.RawURLEncoding.EncodeToString(m.sign(unsigned)), nil
+func (m *TokenManager) CreateAccessToken(session service.Session, project *authjwt.ProjectGrant, expiresAt time.Time) (string, error) {
+	now := m.now().UTC()
+	return authjwt.Sign(m.private, m.kid, authjwt.Claims{
+		Subject: string(session.UserID), Username: session.Username, Issuer: m.issuer, Audience: m.audience,
+		IssuedAt: now.Unix(), ExpiresAt: expiresAt.UTC().Unix(), AuthTime: session.AuthTime.UTC().Unix(),
+		ID: newTokenID(), AuthVersion: session.AuthVersion, PlatformRole: string(session.PlatformRole), Project: project,
+	})
 }
 
 func (m *TokenManager) ParseAccessToken(token string) (service.Principal, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
-		return service.Principal{}, errors.New("invalid token")
-	}
-	providedSignature, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil || !hmac.Equal(providedSignature, m.sign(parts[0]+"."+parts[1])) {
-		return service.Principal{}, errors.New("invalid token")
-	}
-
-	decodedHeader, err := base64.RawURLEncoding.DecodeString(parts[0])
+	key, err := authjwt.PublicJWK(&m.private.PublicKey, m.kid)
 	if err != nil {
-		return service.Principal{}, errors.New("invalid token")
+		return service.Principal{}, err
 	}
-	var header struct {
-		Algorithm string `json:"alg"`
-		Type      string `json:"typ"`
-	}
-	if json.Unmarshal(decodedHeader, &header) != nil || header.Algorithm != "HS256" || header.Type != "JWT" {
-		return service.Principal{}, errors.New("invalid token")
-	}
-
-	decodedPayload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	claims, err := authjwt.Verify(token, authjwt.JWKSet{Keys: []authjwt.JWK{key}}, m.issuer, m.audience, m.now().UTC(), 30*time.Second)
 	if err != nil {
-		return service.Principal{}, errors.New("invalid token")
+		return service.Principal{}, err
 	}
-	var claims struct {
-		Subject string `json:"sub"`
-		Issuer  string `json:"iss"`
-		Expires int64  `json:"exp"`
-	}
-	if json.Unmarshal(decodedPayload, &claims) != nil ||
-		claims.Subject == "" || claims.Issuer != m.issuer ||
-		claims.Expires <= m.now().Unix() {
-		return service.Principal{}, errors.New("invalid token")
-	}
-
-	return service.Principal{
-		UserID:    domain.UserID(claims.Subject),
-		ExpiresAt: time.Unix(claims.Expires, 0).UTC(),
-	}, nil
+	return service.Principal{UserID: domain.UserID(claims.Subject), Username: claims.Username, PlatformRole: domain.PlatformRole(claims.PlatformRole), AuthVersion: claims.AuthVersion, AuthTime: time.Unix(claims.AuthTime, 0).UTC(), ExpiresAt: time.Unix(claims.ExpiresAt, 0).UTC(), Project: claims.Project}, nil
 }
 
-func (m *TokenManager) sign(value string) []byte {
-	hash := hmac.New(sha256.New, m.secret)
-	_, _ = hash.Write([]byte(value))
-	return hash.Sum(nil)
+func (m *TokenManager) PublicJWKSet() (authjwt.JWKSet, error) {
+	key, err := authjwt.PublicJWK(&m.private.PublicKey, m.kid)
+	if err != nil {
+		return authjwt.JWKSet{}, err
+	}
+	return authjwt.JWKSet{Keys: []authjwt.JWK{key}}, nil
 }
+
+func newTokenID() string { return uuid.NewString() }

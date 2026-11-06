@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Статус системы — Inference Platform</title>
+  <link rel="stylesheet" href="/static/home.css">
+  <link rel="stylesheet" href="/static/status.css">
+  <script defer src="/static/status.js"></script>
+</head>
+<body>
+  <main>
+    <header class="page-header">
+      <a class="brand" href="/">Inference Platform</a>
+      <a class="header-link" href="/management">Управление</a>
+    </header>
+    <section class="page-intro">
+      <h1>Статус системы</h1>
+      <p>Состояние сервисов и статистика NGINX. Обновляется каждые 5 секунд.</p>
+    </section>
+    <div class="status-summary" role="status" aria-live="polite">
+      <span id="status-indicator" class="indicator" aria-hidden="true"></span>
+      <span id="status-message">Получение данных…</span>
+      <span id="updated-at" class="updated-at"></span>
+    </div>
+    <section class="status-section" aria-labelledby="readiness-title">
+      <h2 id="readiness-title">Готовность системы</h2>
+      <div class="status-summary" role="status" aria-live="polite">
+        <span id="ready-indicator" class="indicator" aria-hidden="true"></span>
+        <span id="ready-message">Получение данных…</span>
+        <span id="ready-updated-at" class="updated-at"></span>
+      </div>
+      <ul class="readiness-list" aria-label="Состояние сервисов">
+        <li><span id="ready-user-indicator" class="indicator" aria-hidden="true"></span><span>User Service</span><span id="ready-user" class="readiness-state">—</span></li>
+        <li><span id="ready-model-indicator" class="indicator" aria-hidden="true"></span><span>Model Service</span><span id="ready-model" class="readiness-state">—</span></li>
+        <li><span id="ready-inference-indicator" class="indicator" aria-hidden="true"></span><span>Inference Service</span><span id="ready-inference" class="readiness-state">—</span></li>
+      </ul>
+      <p class="status-note">User и Model Service проверяют зависимости; для Inference Service проверяется доступность HTTP. <a href="/ready">Исходные данные</a></p>
+    </section>
+    <section class="status-section" aria-labelledby="services-title">
+      <h2 id="services-title">Доступность остальных сервисов</h2>
+      <ul id="services-list" class="readiness-list" aria-live="polite"><li>Получение данных…</li></ul>
+      <p class="status-note">Для PostgreSQL и сервисов мониторинга проверяется доступность TCP-порта.</p>
+    </section>
+    <section class="status-section" aria-labelledby="connections-title">
+      <h2 id="connections-title">Соединения сейчас</h2>
+      <div class="metrics">
+        <div class="metric"><span>Активные</span><strong id="active">—</strong><small>Открытые соединения</small></div>
+        <div class="metric"><span>Чтение</span><strong id="reading">—</strong><small>Чтение заголовков запроса</small></div>
+        <div class="metric"><span>Запись</span><strong id="writing">—</strong><small>Обработка и отправка ответа</small></div>
+        <div class="metric"><span>Ожидание</span><strong id="waiting">—</strong><small>Свободные keep-alive соединения</small></div>
+      </div>
+    </section>
+    <section class="status-section" aria-labelledby="totals-title">
+      <h2 id="totals-title">Всего с запуска NGINX</h2>
+      <div class="metrics totals">
+        <div class="metric"><span>Принято соединений</span><strong id="accepts">—</strong></div>
+        <div class="metric"><span>Обработано соединений</span><strong id="handled">—</strong></div>
+        <div class="metric"><span>Запросов</span><strong id="requests">—</strong></div>
+      </div>
+      <p class="status-note">Данные NGINX stub_status. Проверки страницы также учитываются в статистике. <a href="/status/data">Исходные данные</a></p>
+    </section>
+  </main>
+</body>
+</html>

@@ -6,12 +6,15 @@ require (
 	github.com/danielgtaylor/huma/v2 v2.39.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
+	github.com/jur4ikoff/utils v0.0.0
 	github.com/rs/zerolog v1.35.1
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.44.0
 	go.opentelemetry.io/otel/sdk v1.44.0
 	golang.org/x/crypto v0.54.0
 )
+
+replace github.com/jur4ikoff/utils => ../utils
 
 require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect

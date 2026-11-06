@@ -12,11 +12,6 @@ import (
 	"time"
 )
 
-const (
-	minimumBcryptCost = 4
-	maximumBcryptCost = 31
-)
-
 type Config struct {
 	Environment string
 	ServiceName string
@@ -29,13 +24,24 @@ type Config struct {
 	DatabaseMaxConns int32
 	DatabaseMinConns int32
 
-	JWTSecret      string
-	JWTIssuer      string
-	AccessTokenTTL time.Duration
-	BcryptCost     int
+	JWTPrivateKeyPath string
+	JWTKeyID          string
+	JWTIssuer         string
+	JWTAudience       string
+	AccessTokenTTL    time.Duration
+	PasswordWorkers   int
 
 	LogLevel  string
 	Telemetry TelemetryConfig
+}
+
+// BootstrapConfig deliberately excludes HTTP, telemetry and JWT key material:
+// the bootstrap binary never starts a server and never issues tokens.
+type BootstrapConfig struct {
+	DatabaseURL      string
+	DatabaseMaxConns int32
+	DatabaseMinConns int32
+	PasswordWorkers  int
 }
 
 type TelemetryConfig struct {
@@ -55,11 +61,14 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	accessTokenTTL, err := positiveDuration("ACCESS_TOKEN_TTL", 15*time.Minute)
+	accessTokenTTL, err := positiveDuration("ACCESS_TOKEN_TTL", 30*time.Minute)
 	if err != nil {
 		return Config{}, err
 	}
-	bcryptCost, err := boundedInt("BCRYPT_COST", 12, minimumBcryptCost, maximumBcryptCost)
+	if accessTokenTTL > 30*time.Minute {
+		return Config{}, errors.New("ACCESS_TOKEN_TTL must not exceed 30m")
+	}
+	passwordWorkers, err := boundedInt("PASSWORD_HASH_WORKERS", 2, 1, 8)
 	if err != nil {
 		return Config{}, err
 	}
@@ -77,29 +86,51 @@ func Load() (Config, error) {
 	}
 
 	config := Config{
-		Environment:      environment,
-		ServiceName:      envOrDefault("OTEL_SERVICE_NAME", "user-service"),
-		Version:          envOrDefault("APP_VERSION", "dev"),
-		HTTPAddr:         envOrDefault("HTTP_ADDR", ":8080"),
-		RequestTimeout:   requestTimeout,
-		DatabaseURL:      requiredEnv("DATABASE_URL"),
-		DatabaseMaxConns: int32(maxConns),
-		DatabaseMinConns: int32(minConns),
-		JWTSecret:        requiredEnv("JWT_SECRET"),
-		JWTIssuer:        envOrDefault("JWT_ISSUER", "user-service"),
-		AccessTokenTTL:   accessTokenTTL,
-		BcryptCost:       bcryptCost,
-		LogLevel:         envOrDefault("LOG_LEVEL", defaultLogLevel(environment)),
-		Telemetry:        telemetry,
+		Environment:       environment,
+		ServiceName:       envOrDefault("OTEL_SERVICE_NAME", "user-service"),
+		Version:           envOrDefault("APP_VERSION", "dev"),
+		HTTPAddr:          envOrDefault("HTTP_ADDR", ":8080"),
+		RequestTimeout:    requestTimeout,
+		DatabaseURL:       requiredEnv("DATABASE_URL"),
+		DatabaseMaxConns:  int32(maxConns),
+		DatabaseMinConns:  int32(minConns),
+		JWTPrivateKeyPath: requiredEnv("JWT_PRIVATE_KEY_PATH"),
+		JWTKeyID:          requiredEnv("JWT_KEY_ID"),
+		JWTIssuer:         envOrDefault("JWT_ISSUER", "user-service"),
+		JWTAudience:       envOrDefault("JWT_AUDIENCE", "inference-platform"),
+		AccessTokenTTL:    accessTokenTTL,
+		PasswordWorkers:   passwordWorkers,
+		LogLevel:          envOrDefault("LOG_LEVEL", defaultLogLevel(environment)),
+		Telemetry:         telemetry,
 	}
 
 	if config.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
 	}
-	if config.JWTSecret == "" {
-		return Config{}, errors.New("JWT_SECRET is required")
+	if config.JWTPrivateKeyPath == "" || config.JWTKeyID == "" {
+		return Config{}, errors.New("JWT_PRIVATE_KEY_PATH and JWT_KEY_ID are required")
 	}
 	return config, nil
+}
+
+func LoadBootstrap() (BootstrapConfig, error) {
+	maxConns, err := boundedInt("DB_MAX_CONNS", 10, 1, 100)
+	if err != nil {
+		return BootstrapConfig{}, err
+	}
+	minConns, err := boundedInt("DB_MIN_CONNS", 0, 0, maxConns)
+	if err != nil {
+		return BootstrapConfig{}, err
+	}
+	workers, err := boundedInt("PASSWORD_HASH_WORKERS", 2, 1, 8)
+	if err != nil {
+		return BootstrapConfig{}, err
+	}
+	url := requiredEnv("DATABASE_URL")
+	if url == "" {
+		return BootstrapConfig{}, errors.New("DATABASE_URL is required")
+	}
+	return BootstrapConfig{DatabaseURL: url, DatabaseMaxConns: int32(maxConns), DatabaseMinConns: int32(minConns), PasswordWorkers: workers}, nil
 }
 
 func loadTelemetry(environment string) (TelemetryConfig, error) {

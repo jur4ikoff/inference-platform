@@ -11,6 +11,7 @@ import (
 	inferencev1 "github.com/jur4ikoff/internal-api/gen/go/inference/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -124,7 +125,7 @@ func deploymentResponse(deployment domain.Deployment) *inferencev1.Deployment {
 	if provider := deployment.Spec.ProviderHuggingFace; provider != nil {
 		spec.ProviderHuggingFace = &inferencev1.HuggingFaceProvider{Repo: provider.Repo}
 	}
-	return &inferencev1.Deployment{
+	result := &inferencev1.Deployment{
 		DeploymentId:   deployment.ID.String(),
 		ContainerId:    deployment.ContainerID,
 		ModelId:        deployment.ModelID.String(),
@@ -135,6 +136,13 @@ func deploymentResponse(deployment domain.Deployment) *inferencev1.Deployment {
 		Status:         deploymentStatus(deployment.Status),
 		Spec:           spec,
 	}
+	if deployment.StartedAt != nil {
+		result.StartedAt = timestamppb.New(*deployment.StartedAt)
+	}
+	if deployment.UpdatedAt != nil {
+		result.UpdatedAt = timestamppb.New(*deployment.UpdatedAt)
+	}
+	return result
 }
 
 func deploymentStatus(value domain.Status) inferencev1.ModelStatus {
