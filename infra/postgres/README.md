@@ -12,14 +12,14 @@ make sql-generate
 
 Для `inference-service` используются:
 
-- `schema.sql` — описание таблицы `deployments` для генератора.
+- `migrations/` — схема PostgreSQL для sqlc и создания таблиц БД.
 - `queries/inference-service/connection.sql` — запрос `CheckConnection`.
 - `queries/inference-service/deployments.sql` — создание, поиск deployment и обновление статусов.
 - `../../inference-service/internal/infrastructure/dao/` — сгенерированный Go-пакет.
 - `../../inference-service/internal/repository/deployment.go` — `DeploymentRepository`, вызывающий сгенерированные запросы.
 
-Запрос `SELECT 1` проверяет соединение и не требует таблиц. Файлы в `schema.sql`
-и `queries/` сами по себе не выполняются как миграции при запуске приложения.
+Запрос `SELECT 1` проверяет соединение и не требует таблиц. SQL-запросы из
+`queries/` не применяются как миграции; миграции выполняет отдельный runner.
 
 ## Подключение
 
@@ -89,8 +89,7 @@ Dockerfile также копирует этот модуль в контекст
 
 Начальный статус — `PENDING`: после сохранения записи сервис вызывает Docker Start,
 а менеджер обновляет статус по фактическому состоянию контейнера.
-В текущем контракте есть только `UserID`, поэтому `username` содержит его строковое
-представление. Имя deployment совпадает с именем контейнера.
+Поле `username` содержит имя пользователя, переданное при создании deployment. Имя deployment совпадает с именем контейнера.
 `project` — имя проекта, `deployment_name` — публичное имя deployment; `name` содержит
 имя контейнера со случайным суффиксом. Публичный адрес — `{project}.{deployment_name}.<host>`.
 `CreateDeployment` использует `INSERT ... RETURNING` (`:one` в sqlc) и возвращает
@@ -132,8 +131,7 @@ Dockerfile также копирует этот модуль в контекст
 
 ## Добавление запросов
 
-1. Добавьте определения таблиц в `schema.sql` и соответствующие изменения БД
-   в отдельную миграцию в `migrations/`.
+1. Добавьте изменения схемы в миграции в `migrations/`.
 2. Добавьте SQL-файл в `queries/inference-service/`. Перед запросом укажите
    аннотацию `-- name: ИмяМетода :one`, `:many` или `:exec`.
 3. Выполните `make sql-check` и `make sql-generate`.
@@ -156,3 +154,22 @@ INFERENCE_TEST_DATABASE_URL='postgres://USER:PASSWORD@localhost:5432/DATABASE?ss
 и сохранение deployment с JSONB. Для проверки записи миграция выполняется
 во временной таблице внутри транзакции с последующим откатом; таблицы и данные
 приложения не меняются.
+
+## Миграции UserService
+
+Миграции `000001`–`000004` создают пользователей, проекты, роли и участников.
+Runner не повторяет миграции, уже записанные в `schema_migrations`.
+
+Интеграционный тест первого спринта запускается на отдельной тестовой БД:
+
+```sh
+USER_TEST_DATABASE_URL='postgres://USER:PASSWORD@localhost:5432/TEST_DATABASE?sslmode=disable' \
+  go -C user-service test ./internal/repository -run TestUserRepositoryIntegration -v
+```
+
+Тест создаёт случайную схему и удаляет её после завершения. Без переменной
+интеграционный сценарий пропускается.
+
+Модели сохраняют `username` как текст без внешнего ключа на пользователей.
+Миграция `000012` переносит прежний `user_id` в текст без потери значения;
+для старых записей это строковое представление UUID, поскольку имя не сохранялось.

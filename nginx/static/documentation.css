@@ -1,0 +1,14 @@
+.documentation-nav { display: flex; flex-wrap: wrap; gap: 1.5rem; }
+.markdown { max-width: 980px; margin: 3rem auto; color: #dedee5; line-height: 1.7; overflow-wrap: anywhere; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { color: #f1f1f5; line-height: 1.25; margin: 2.2rem 0 1rem; }
+.markdown h1 { font-size: clamp(2rem, 4vw, 3rem); }
+.markdown h2 { border-bottom: 1px solid #333338; padding-bottom: .5rem; }
+.markdown a { color: #b9bcff; }
+.markdown img { display: block; max-width: 100%; height: auto; margin: 1.5rem 0; border-radius: .5rem; }
+.markdown pre { overflow-x: auto; padding: 1rem; background: #202023; border: 1px solid #333338; border-radius: .5rem; line-height: 1.5; }
+.markdown code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .9em; }
+.markdown :not(pre) > code { padding: .15em .3em; border-radius: .25rem; background: #29292d; }
+.markdown table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+.markdown th, .markdown td { padding: .6rem .8rem; border: 1px solid #44444b; text-align: left; }
+.markdown blockquote { margin-left: 0; padding-left: 1rem; border-left: 3px solid #777781; color: #aaaab3; }
+.markdown hr { border: 0; border-top: 1px solid #333338; }

@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -71,6 +72,8 @@ type Deployment struct {
 	DeploymentName string
 	Status         Status
 	Spec           DeploymentSpec
+	StartedAt      *time.Time
+	UpdatedAt      *time.Time
 }
 
 type DeploymentState struct {

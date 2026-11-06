@@ -13,11 +13,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	inferencev1 "github.com/jur4ikoff/internal-api/gen/go/inference/v1"
 	"github.com/jur4ikoff/model-service/internal/api"
+	"github.com/jur4ikoff/model-service/internal/auth"
 	"github.com/jur4ikoff/model-service/internal/config"
 	"github.com/jur4ikoff/model-service/internal/repository"
 	"github.com/jur4ikoff/model-service/internal/service"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 func main() {
@@ -61,9 +63,31 @@ func main() {
 		repository.NewModelRepository(pool),
 		service.NewGRPCModelRuntime(inferencev1.NewInferenceServiceClient(connection)),
 	)
+	verifier, err := auth.NewJWKSVerifier(cfg.UserJWKSURL, cfg.JWTIssuer, cfg.JWTAudience, &http.Client{Timeout: 3 * time.Second}, cfg.JWKSCacheTTL)
+	if err != nil {
+		slog.Error("configure JWT verifier", "error", err)
+		os.Exit(1)
+	}
+	root := http.NewServeMux()
+	root.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	root.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		checkCtx, cancel := context.WithTimeout(r.Context(), time.Second)
+		defer cancel()
+		if err := pool.Ping(checkCtx); err != nil {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		result, err := healthv1.NewHealthClient(connection).Check(checkCtx, &healthv1.HealthCheckRequest{Service: "inference.v1.InferenceService"})
+		if err != nil || result.GetStatus() != healthv1.HealthCheckResponse_SERVING {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	root.Handle("/", api.NewHandler(models, verifier).Router())
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           http.TimeoutHandler(api.NewHandler(models).Router(), cfg.RequestTimeout, `{"error":"request timed out"}`),
+		Handler:           http.TimeoutHandler(root, cfg.RequestTimeout, `{"error":"request timed out"}`),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       cfg.RequestTimeout,
 		WriteTimeout:      cfg.RequestTimeout,

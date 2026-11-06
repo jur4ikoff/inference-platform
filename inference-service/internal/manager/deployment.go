@@ -28,7 +28,6 @@ type Runtime interface {
 	GetContainer(context.Context, string) (client.ContainerInspectResult, error)
 	WatchContainerEvents(context.Context, string) client.EventsResult
 	ContainerEndpoint(client.ContainerInspectResult) (string, error)
-	StopModelContainers(context.Context) error
 }
 
 type RouteRegistry interface {

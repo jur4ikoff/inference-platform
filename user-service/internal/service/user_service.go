@@ -4,15 +4,19 @@ import (
 	"context"
 	"errors"
 	"net/mail"
+	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jur4ikoff/user-service/internal/domain"
+	"github.com/jur4ikoff/utils/authjwt"
 )
 
 const (
-	minimumPasswordLength = 12
+	minimumPasswordLength = 8
 	maximumBcryptLength   = 72
+	maximumAccessTokenTTL = 30 * time.Minute
 )
 
 // UserService contains application use cases. It does not know about HTTP,
@@ -27,6 +31,7 @@ type UserService struct {
 }
 
 type RegisterInput struct {
+	Login     string
 	Firstname string
 	Lastname  string
 	Email     string
@@ -34,16 +39,18 @@ type RegisterInput struct {
 }
 
 type RegisteredUser struct {
-	ID        domain.UserID
-	Email     string
-	Firstname string
-	Lastname  string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Login        string
+	PlatformRole string
+	ID           domain.UserID
+	Email        string
+	Firstname    string
+	Lastname     string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type LoginInput struct {
-	Email    string
+	Login    string
 	Password string
 }
 
@@ -69,6 +76,9 @@ func NewUserService(
 	clock Clock,
 	accessTTL time.Duration,
 ) *UserService {
+	if accessTTL <= 0 || accessTTL > maximumAccessTokenTTL {
+		accessTTL = maximumAccessTokenTTL
+	}
 	return &UserService{
 		users:     users,
 		hasher:    hasher,
@@ -81,8 +91,9 @@ func NewUserService(
 
 func (s *UserService) Register(ctx context.Context, input RegisterInput) (RegisteredUser, error) {
 	firstname, lastname := strings.TrimSpace(input.Firstname), strings.TrimSpace(input.Lastname)
+	login := strings.ToLower(strings.TrimSpace(input.Login))
 	email, err := normalizeEmail(input.Email)
-	if err != nil || firstname == "" || lastname == "" || !validPassword(input.Password) {
+	if err != nil || firstname == "" || lastname == "" || !validLogin(login) || !validPassword(input.Password) {
 		return RegisteredUser{}, ErrInvalidInput
 	}
 
@@ -94,37 +105,50 @@ func (s *UserService) Register(ctx context.Context, input RegisterInput) (Regist
 	now := s.clock.Now().UTC()
 	user := domain.User{
 		ID:           s.ids.NewUserID(),
+		PlatformRole: domain.PlatformRoleUser,
 		Firstname:    firstname,
 		Lastname:     lastname,
 		Email:        email,
+		Login:        login,
 		PasswordHash: hash,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
 
-	if err := s.users.Create(ctx, user); err != nil {
+	if creator, ok := s.users.(interface {
+		CreateSaved(context.Context, domain.User) (domain.User, error)
+	}); ok {
+		user, err = creator.CreateSaved(ctx, user)
+		if err != nil {
+			return RegisteredUser{}, err
+		}
+	} else if err := s.users.Create(ctx, user); err != nil {
 		return RegisteredUser{}, err
 	}
 
 	return RegisteredUser{
-		ID: user.ID, Email: user.Email,
+		ID: user.ID, Email: user.Email, Login: user.Login, PlatformRole: string(user.PlatformRole),
 		Firstname: user.Firstname, Lastname: user.Lastname,
 		CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt,
 	}, nil
 }
 
 func (s *UserService) Login(ctx context.Context, input LoginInput) (AccessToken, error) {
-	email, err := normalizeEmail(input.Email)
-	if err != nil {
+	login := strings.ToLower(strings.TrimSpace(input.Login))
+	if !validLogin(login) {
 		return AccessToken{}, ErrInvalidCredentials
 	}
 
-	user, err := s.users.FindByEmail(ctx, email)
+	user, err := s.users.FindByLogin(ctx, login)
 	if err != nil {
 		if errors.Is(err, domain.ErrUserNotFound) {
 			// Equalise the most visible timing difference between an existing and
 			// non-existing account. Never expose which part of credentials failed.
-			_ = s.hasher.Compare(dummyPasswordHash, input.Password)
+			dummy := dummyPasswordHash
+			if source, ok := s.hasher.(interface{ DummyHash() string }); ok {
+				dummy = source.DummyHash()
+			}
+			_ = s.hasher.Compare(dummy, input.Password)
 			return AccessToken{}, ErrInvalidCredentials
 		}
 		return AccessToken{}, err
@@ -134,8 +158,36 @@ func (s *UserService) Login(ctx context.Context, input LoginInput) (AccessToken,
 		return AccessToken{}, ErrInvalidCredentials
 	}
 
-	expiresAt := s.clock.Now().UTC().Add(s.accessTTL)
-	value, err := s.tokens.CreateAccessToken(user.ID, expiresAt)
+	now := s.clock.Now().UTC()
+	state := domain.AuthState{UserID: user.ID, PlatformRole: user.PlatformRole}
+	if source, ok := s.users.(interface {
+		GetAuthState(context.Context, domain.UserID) (domain.AuthState, error)
+	}); ok {
+		state, err = source.GetAuthState(ctx, user.ID)
+		if err != nil {
+			return AccessToken{}, ErrInvalidCredentials
+		}
+	}
+	if rehasher, ok := s.hasher.(interface{ NeedsRehash(string) bool }); ok && rehasher.NeedsRehash(user.PasswordHash) {
+		freshHash, hashErr := s.hasher.Hash(input.Password)
+		if hashErr != nil {
+			return AccessToken{}, hashErr
+		}
+		if updater, ok := s.users.(interface {
+			UpdatePasswordHashIfCurrent(context.Context, domain.UserID, string, string, time.Time) (domain.AuthState, bool, error)
+		}); ok {
+			updatedState, changed, updateErr := updater.UpdatePasswordHashIfCurrent(ctx, user.ID, user.PasswordHash, freshHash, now)
+			if updateErr != nil {
+				return AccessToken{}, updateErr
+			}
+			if !changed {
+				return AccessToken{}, ErrInvalidCredentials
+			}
+			state = updatedState
+		}
+	}
+	expiresAt := now.Add(s.accessTTL)
+	value, err := s.tokens.CreateAccessToken(Session{UserID: user.ID, Username: user.Login, PlatformRole: state.PlatformRole, AuthVersion: state.AuthVersion, AuthTime: now}, nil, expiresAt)
 	if err != nil {
 		return AccessToken{}, err
 	}
@@ -143,7 +195,7 @@ func (s *UserService) Login(ctx context.Context, input LoginInput) (AccessToken,
 	return AccessToken{Value: value, ExpiresAt: expiresAt}, nil
 }
 
-func (s *UserService) Verify(_ context.Context, rawToken string) (Principal, error) {
+func (s *UserService) Verify(ctx context.Context, rawToken string) (Principal, error) {
 	if strings.TrimSpace(rawToken) == "" {
 		return Principal{}, ErrInvalidToken
 	}
@@ -152,20 +204,51 @@ func (s *UserService) Verify(_ context.Context, rawToken string) (Principal, err
 	if err != nil {
 		return Principal{}, ErrInvalidToken
 	}
+	if source, ok := s.users.(interface {
+		GetAuthState(context.Context, domain.UserID) (domain.AuthState, error)
+	}); ok {
+		state, stateErr := source.GetAuthState(ctx, principal.UserID)
+		if stateErr != nil || state.AuthVersion != principal.AuthVersion || state.PlatformRole != principal.PlatformRole {
+			return Principal{}, ErrInvalidToken
+		}
+	}
 	return principal, nil
 }
 
+func (s *UserService) PublicJWKSet() (authjwt.JWKSet, error) {
+	provider, ok := s.tokens.(interface {
+		PublicJWKSet() (authjwt.JWKSet, error)
+	})
+	if !ok {
+		return authjwt.JWKSet{}, errors.New("token manager does not expose JWKS")
+	}
+	return provider.PublicJWKSet()
+}
+
 func (s *UserService) UpdateUser(ctx context.Context, id domain.UserID, input UpdateUserInput) (RegisteredUser, error) {
+	if _, ok := s.users.(interface {
+		ActorRole(context.Context, domain.UserID) (string, error)
+	}); ok {
+		if err := s.AuthorizeUser(ctx, id); err != nil {
+			return RegisteredUser{}, err
+		}
+	}
 	if input.Email == nil && input.Password == nil && input.Firstname == nil && input.Lastname == nil {
 		return RegisteredUser{}, ErrInvalidInput
 	}
 
 	if input.Firstname != nil {
 		firstname := strings.TrimSpace(*input.Firstname)
+		if firstname == "" {
+			return RegisteredUser{}, ErrInvalidInput
+		}
 		input.Firstname = &firstname
 	}
 	if input.Lastname != nil {
 		lastname := strings.TrimSpace(*input.Lastname)
+		if lastname == "" {
+			return RegisteredUser{}, ErrInvalidInput
+		}
 		input.Lastname = &lastname
 	}
 
@@ -200,13 +283,20 @@ func (s *UserService) UpdateUser(ctx context.Context, id domain.UserID, input Up
 		return RegisteredUser{}, err
 	}
 	return RegisteredUser{
-		ID: user.ID, Email: user.Email,
+		ID: user.ID, Login: user.Login, Email: user.Email, PlatformRole: string(user.PlatformRole),
 		Firstname: user.Firstname, Lastname: user.Lastname,
 		CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt,
 	}, nil
 }
 
 func (s *UserService) DeleteUser(ctx context.Context, id domain.UserID) error {
+	if _, ok := s.users.(interface {
+		ActorRole(context.Context, domain.UserID) (string, error)
+	}); ok {
+		if err := s.AuthorizeUser(ctx, id); err != nil {
+			return err
+		}
+	}
 	return s.users.Delete(ctx, id)
 }
 
@@ -227,7 +317,21 @@ func (s *UserService) ListUsers(ctx context.Context, input ListUsersInput) (User
 	}
 	input.Limit = limit
 	// One extra row tells us whether another page exists without a count query.
-	users, err := s.users.List(ctx, input.Offset, input.Limit+1)
+	var users []domain.User
+	if scoped, ok := s.users.(interface {
+		ListVisible(context.Context, domain.UserID, int, int) ([]domain.User, error)
+	}); ok {
+		principal, authenticated := PrincipalFromContext(ctx)
+		if !authenticated {
+			return UsersPage{}, ErrInvalidToken
+		}
+		users, err = scoped.ListVisible(ctx, principal.UserID, input.Offset, input.Limit+1)
+	} else {
+		if _, authenticated := PrincipalFromContext(ctx); authenticated {
+			return UsersPage{}, errors.New("repository does not support scoped user listing")
+		}
+		users, err = s.users.List(ctx, input.Offset, input.Limit+1)
+	}
 	if err != nil {
 		return UsersPage{}, err
 	}
@@ -239,7 +343,7 @@ func (s *UserService) ListUsers(ctx context.Context, input ListUsersInput) (User
 	}
 	result := make([]RegisteredUser, 0, len(users))
 	for _, user := range users {
-		result = append(result, RegisteredUser{ID: user.ID, Email: user.Email, Firstname: user.Firstname, Lastname: user.Lastname})
+		result = append(result, RegisteredUser{ID: user.ID, Login: user.Login, Email: user.Email, PlatformRole: string(user.PlatformRole), Firstname: user.Firstname, Lastname: user.Lastname})
 	}
 	page.Users = result
 	return page, nil
@@ -259,9 +363,65 @@ func normalizeEmail(value string) (string, error) {
 }
 
 func validPassword(password string) bool {
-	return len(password) >= minimumPasswordLength && len(password) <= maximumBcryptLength
+	return utf8.RuneCountInString(password) >= minimumPasswordLength && utf8.RuneCountInString(password) <= maximumBcryptLength
 }
+
+var loginPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{2,31}$`)
+
+func validLogin(login string) bool { return loginPattern.MatchString(login) }
 
 // This is a bcrypt hash of an arbitrary value. It is used only to reduce
 // account-enumeration timing differences when the account does not exist.
 const dummyPasswordHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+
+func (s *UserService) GetUser(ctx context.Context, target domain.UserID) (RegisteredUser, error) {
+	principal, ok := PrincipalFromContext(ctx)
+	if !ok {
+		return RegisteredUser{}, ErrInvalidToken
+	}
+	scoped, ok := s.users.(interface {
+		GetVisible(context.Context, domain.UserID, domain.UserID) (domain.User, error)
+	})
+	if !ok {
+		return RegisteredUser{}, domain.ErrUserNotFound
+	}
+	u, err := scoped.GetVisible(ctx, principal.UserID, target)
+	if err != nil {
+		return RegisteredUser{}, err
+	}
+	return RegisteredUser{ID: u.ID, Login: u.Login, Email: u.Email, PlatformRole: string(u.PlatformRole), Firstname: u.Firstname, Lastname: u.Lastname}, nil
+}
+
+func (s *UserService) GetUserByLogin(ctx context.Context, login string) (RegisteredUser, error) {
+	if _, ok := PrincipalFromContext(ctx); !ok || !validLogin(strings.ToLower(strings.TrimSpace(login))) {
+		return RegisteredUser{}, ErrInvalidToken
+	}
+	u, err := s.users.FindByLogin(ctx, strings.ToLower(strings.TrimSpace(login)))
+	if err != nil {
+		return RegisteredUser{}, err
+	}
+	return RegisteredUser{ID: u.ID, Login: u.Login, Email: u.Email, PlatformRole: string(u.PlatformRole), Firstname: u.Firstname, Lastname: u.Lastname}, nil
+}
+func (s *UserService) AuthorizeUser(ctx context.Context, target domain.UserID) error {
+	principal, ok := PrincipalFromContext(ctx)
+	if !ok {
+		return ErrInvalidToken
+	}
+	if principal.UserID == target {
+		return nil
+	}
+	repo, ok := s.users.(interface {
+		ActorRole(context.Context, domain.UserID) (string, error)
+	})
+	if !ok {
+		return ErrForbidden
+	}
+	role, err := repo.ActorRole(ctx, principal.UserID)
+	if err != nil {
+		return err
+	}
+	if role != "admin" {
+		return ErrForbidden
+	}
+	return nil
+}

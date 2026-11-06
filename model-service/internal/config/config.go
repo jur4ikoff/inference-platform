@@ -15,6 +15,10 @@ type Config struct {
 	DatabaseMinConn   int32
 	RequestTimeout    time.Duration
 	InferenceGRPCAddr string
+	UserJWKSURL       string
+	JWTIssuer         string
+	JWTAudience       string
+	JWKSCacheTTL      time.Duration
 }
 
 func Load() (Config, error) {
@@ -36,6 +40,14 @@ func Load() (Config, error) {
 	if databaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
 	}
+	cacheTTL, err := time.ParseDuration(envOrDefault("JWKS_CACHE_TTL", "1m"))
+	if err != nil || cacheTTL <= 0 || cacheTTL > 5*time.Minute {
+		return Config{}, fmt.Errorf("JWKS_CACHE_TTL must be between 0 and 5 minutes")
+	}
+	issuer, audience := strings.TrimSpace(os.Getenv("JWT_ISSUER")), strings.TrimSpace(os.Getenv("JWT_AUDIENCE"))
+	if issuer == "" || audience == "" {
+		return Config{}, fmt.Errorf("JWT_ISSUER and JWT_AUDIENCE are required")
+	}
 
 	return Config{
 		HTTPAddr:          envOrDefault("HTTP_ADDR", ":8081"),
@@ -44,6 +56,10 @@ func Load() (Config, error) {
 		DatabaseMinConn:   minConn,
 		RequestTimeout:    timeout,
 		InferenceGRPCAddr: envOrDefault("INFERENCE_GRPC_ADDR", "localhost:9091"),
+		UserJWKSURL:       envOrDefault("USER_JWKS_URL", "http://user-service:8080/.well-known/jwks.json"),
+		JWTIssuer:         issuer,
+		JWTAudience:       audience,
+		JWKSCacheTTL:      cacheTTL,
 	}, nil
 }
 

@@ -32,7 +32,7 @@ UI и API доступны напрямую по `project.deploymentName.<host>`
 grpcurl -plaintext -d '{
   "project": "demo",
   "modelId": "0197eb5a-37c6-7e48-8cd6-0c19edcd72f1",
-  "userId": "0197eb5a-37c6-7e48-8cd6-0c19edcd72f2",
+  "username": "alice",
   "deploymentName": "qwen-small",
   "spec": {
     "providerType": "HUGGING_FACE",

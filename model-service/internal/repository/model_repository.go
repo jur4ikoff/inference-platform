@@ -2,88 +2,115 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"strings"
+	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jur4ikoff/model-service/internal/domain"
+	modeldao "github.com/jur4ikoff/model-service/internal/infrastructure/dao"
 )
 
 type ModelRepository struct {
-	pool *pgxpool.Pool
+	queries *modeldao.Queries
 }
 
-func NewModelRepository(pool *pgxpool.Pool) *ModelRepository {
-	return &ModelRepository{pool: pool}
+func NewModelRepository(pool modeldao.DBTX) *ModelRepository {
+	return &ModelRepository{queries: modeldao.New(pool)}
 }
 
-func (r *ModelRepository) Create(ctx context.Context, model domain.Model) error {
-	_, err := r.pool.Exec(ctx, `
-		INSERT INTO models (id, created_at, updated_at, name, description, user_id, project, spec)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		model.ID, model.CreatedAt, model.UpdatedAt, model.Name, model.Description, model.UserID, model.Project, model.Spec,
-	)
-	return modelWriteError(err)
+func (r *ModelRepository) Create(ctx context.Context, model domain.Model) (domain.Model, error) {
+	spec, err := model.Spec.CanonicalJSON()
+	if err != nil {
+		return domain.Model{}, fmt.Errorf("encode model spec: %w", err)
+	}
+	row, err := r.queries.CreateModel(ctx, modeldao.CreateModelParams{
+		ID:          uuidValue(model.ID),
+		CreatedAt:   timestampValue(model.CreatedAt),
+		UpdatedAt:   timestampValue(model.UpdatedAt),
+		Name:        model.Name,
+		Description: model.Description,
+		Username:    model.Username,
+		Project:     model.Project,
+		Spec:        spec,
+	})
+	if err != nil {
+		return domain.Model{}, modelWriteError(err)
+	}
+	saved, err := modelFromDAO(row)
+	if err != nil {
+		return domain.Model{}, fmt.Errorf("decode created model: %w", err)
+	}
+	return saved, nil
 }
 
 func (r *ModelRepository) Get(ctx context.Context, project, modelID string) (domain.Model, error) {
-	row := r.pool.QueryRow(ctx, `
-		SELECT id, created_at, updated_at, name, description, user_id, project, spec
-		FROM models WHERE project = $1 AND id = $2`, project, modelID)
-	return scanModel(row)
+	row, err := r.queries.GetModel(ctx, modeldao.GetModelParams{Project: project, ID: uuidValue(modelID)})
+	return modelResult(row, err)
 }
 
 func (r *ModelRepository) List(ctx context.Context, project string, offset, limit int) ([]domain.Model, error) {
-	rows, err := r.pool.Query(ctx, `
-		SELECT id, created_at, updated_at, name, description, user_id, project, spec
-		FROM models
-		WHERE project = $1
-		ORDER BY created_at DESC, id DESC
-		LIMIT $2 OFFSET $3`, project, limit, offset)
+	rows, err := r.queries.ListModels(ctx, modeldao.ListModelsParams{
+		Project:    project,
+		PageLimit:  int64(limit),
+		PageOffset: int64(offset),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	models := make([]domain.Model, 0)
-	for rows.Next() {
-		model, err := scanModel(rows)
+	models := make([]domain.Model, 0, len(rows))
+	for _, row := range rows {
+		model, err := modelFromDAO(row)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("decode listed model: %w", err)
 		}
 		models = append(models, model)
 	}
-	return models, rows.Err()
+	return models, nil
 }
 
-func (r *ModelRepository) Update(ctx context.Context, project, modelID string, name, description *string, spec json.RawMessage, updatedAt time.Time) (domain.Model, error) {
-	row := r.pool.QueryRow(ctx, `
-		UPDATE models
-		SET name = COALESCE($3, name),
-			description = COALESCE($4, description),
-			spec = COALESCE($5, spec),
-			updated_at = $6
-		WHERE project = $1 AND id = $2
-		RETURNING id, created_at, updated_at, name, description, user_id, project, spec`,
-		project, modelID, name, description, spec, updatedAt,
-	)
-	model, err := scanModel(row)
-	return model, modelWriteError(err)
+func (r *ModelRepository) Update(ctx context.Context, project, modelID string, name, description *string, spec *domain.ModelSpec, updatedAt time.Time) (domain.Model, error) {
+	var encodedSpec []byte
+	if spec != nil {
+		var err error
+		encodedSpec, err = spec.CanonicalJSON()
+		if err != nil {
+			return domain.Model{}, fmt.Errorf("encode model spec: %w", err)
+		}
+	}
+	row, err := r.queries.UpdateModel(ctx, modeldao.UpdateModelParams{
+		Name:        optionalTextValue(name),
+		Description: optionalTextValue(description),
+		Spec:        encodedSpec,
+		UpdatedAt:   timestampValue(updatedAt),
+		Project:     project,
+		ID:          uuidValue(modelID),
+	})
+	return modelResult(row, modelWriteError(err))
 }
 
 func (r *ModelRepository) Delete(ctx context.Context, project, modelID string) error {
-	result, err := r.pool.Exec(ctx, `DELETE FROM models WHERE project = $1 AND id = $2`, project, modelID)
+	rowsAffected, err := r.queries.DeleteModel(ctx, modeldao.DeleteModelParams{Project: project, ID: uuidValue(modelID)})
 	if err != nil {
 		return err
 	}
-	if result.RowsAffected() == 0 {
+	if rowsAffected == 0 {
 		return domain.ErrModelNotFound
 	}
 	return nil
+}
+
+func modelResult(row modeldao.Model, err error) (domain.Model, error) {
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.Model{}, domain.ErrModelNotFound
+		}
+		return domain.Model{}, err
+	}
+	return modelFromDAO(row)
 }
 
 func modelWriteError(err error) error {
@@ -94,18 +121,42 @@ func modelWriteError(err error) error {
 	return err
 }
 
-type rowScanner interface {
-	Scan(dest ...any) error
+func modelFromDAO(row modeldao.Model) (domain.Model, error) {
+	if !row.ID.Valid || !row.CreatedAt.Valid || !row.UpdatedAt.Valid {
+		return domain.Model{}, errors.New("model row contains a null required field")
+	}
+	spec, _, err := domain.ParseModelSpec(row.Spec)
+	if err != nil {
+		return domain.Model{}, fmt.Errorf("decode model spec: %w", err)
+	}
+	model := domain.Model{
+		ID:          uuid.UUID(row.ID.Bytes).String(),
+		CreatedAt:   row.CreatedAt.Time,
+		UpdatedAt:   row.UpdatedAt.Time,
+		Name:        row.Name,
+		Description: row.Description,
+		Username:    row.Username,
+		Project:     row.Project,
+		Spec:        spec,
+	}
+	return model, nil
 }
 
-func scanModel(row rowScanner) (domain.Model, error) {
-	var model domain.Model
-	if err := row.Scan(&model.ID, &model.CreatedAt, &model.UpdatedAt, &model.Name, &model.Description, &model.UserID, &model.Project, &model.Spec); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.Model{}, domain.ErrModelNotFound
-		}
-		return domain.Model{}, err
+func uuidValue(value string) pgtype.UUID {
+	parsed, err := uuid.Parse(value)
+	if err != nil {
+		return pgtype.UUID{}
 	}
-	model.Spec = json.RawMessage(strings.TrimSpace(string(model.Spec)))
-	return model, nil
+	return pgtype.UUID{Bytes: parsed, Valid: true}
+}
+
+func timestampValue(value time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: value, Valid: true}
+}
+
+func optionalTextValue(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
 }

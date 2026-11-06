@@ -3,9 +3,11 @@ FROM golang:1.26.5-bookworm AS build
 WORKDIR /src/model-service
 
 COPY internal-api /src/internal-api
+COPY utils/go.mod utils/go.sum /src/utils/
 COPY model-service/go.mod model-service/go.sum ./
 RUN go mod download
 
+COPY utils /src/utils
 COPY model-service/cmd ./cmd
 COPY model-service/internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /model-service ./cmd

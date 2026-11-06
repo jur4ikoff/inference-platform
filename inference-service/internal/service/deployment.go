@@ -56,7 +56,7 @@ func (s *DeploymentService) Init(ctx context.Context) error {
 
 type StartDeploymentCommand struct {
 	Project        string
-	UserID         uuid.UUID
+	Username       string
 	ModelID        uuid.UUID
 	DeploymentName string
 	Spec           domain.DeploymentSpec
@@ -88,7 +88,7 @@ func (s *DeploymentService) StartDeployment(ctx context.Context, command StartDe
 		ContainerID:    containerID,
 		ModelID:        command.ModelID,
 		Project:        command.Project,
-		Username:       command.UserID.String(),
+		Username:       command.Username,
 		Name:           containerName,
 		DeploymentName: command.DeploymentName,
 		Status:         domain.StatusPending,

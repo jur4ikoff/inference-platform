@@ -3,20 +3,20 @@ package service_test
 import (
 	"context"
 	"errors"
-	"reflect"
-	"strings"
-	"testing"
-
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	"github.com/jur4ikoff/inference-service/internal/config"
 	"github.com/jur4ikoff/inference-service/internal/domain"
 	"github.com/jur4ikoff/inference-service/internal/service"
+	"github.com/jur4ikoff/inference-service/internal/testutil"
+	"reflect"
+	"strings"
+	"testing"
 )
 
 func deploymentCommand() service.StartDeploymentCommand {
 	return service.StartDeploymentCommand{
-		Project: "project-1", UserID: uuid.New(), ModelID: uuid.New(), DeploymentName: "qwen-small",
+		Project: "project-1", Username: "alice", ModelID: uuid.New(), DeploymentName: "qwen-small",
 		Spec: domain.DeploymentSpec{
 			ProviderType: domain.ModelProviderTypeHuggingFace,
 			ProviderHuggingFace: &domain.HuggingFaceProvider{
@@ -26,6 +26,7 @@ func deploymentCommand() service.StartDeploymentCommand {
 	}
 }
 
+// Техника: класс успешного создания.
 func TestStartDeploymentSavesCreatedDeployment(t *testing.T) {
 	command := deploymentCommand()
 	runtime := &deploymentRuntime{}
@@ -51,7 +52,7 @@ func TestStartDeploymentSavesCreatedDeployment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deployment.ID == uuid.Nil || deployment.ContainerID != "docker-id" || deployment.ModelID != command.ModelID || deployment.Project != command.Project || deployment.Username != command.UserID.String() || deployment.Status != domain.StatusPending {
+	if deployment.ID == uuid.Nil || deployment.ContainerID != "docker-id" || deployment.ModelID != command.ModelID || deployment.Project != command.Project || deployment.Username != command.Username || deployment.Status != domain.StatusPending {
 		t.Fatalf("incorrect deployment: %+v", deployment)
 	}
 	if !reflect.DeepEqual(deployment.Spec, command.Spec) || !reflect.DeepEqual(repo.saved, deployment) || repo.calls != 1 {
@@ -68,6 +69,7 @@ func TestStartDeploymentSavesCreatedDeployment(t *testing.T) {
 	}
 }
 
+// Техника: класс существующего активного запуска.
 func TestStartDeploymentRejectsExistingDeploymentBeforeDocker(t *testing.T) {
 	runtime := &deploymentRuntime{}
 	repo := &deploymentRepository{exists: true}
@@ -80,6 +82,7 @@ func TestStartDeploymentRejectsExistingDeploymentBeforeDocker(t *testing.T) {
 	}
 }
 
+// Техника: классы эквивалентности ошибок проверки БД.
 func TestStartDeploymentStopsWhenDeploymentCheckFails(t *testing.T) {
 	for _, failure := range []error{errors.New("database unavailable"), context.Canceled} {
 		repo := &deploymentRepository{existsErr: failure}
@@ -94,6 +97,7 @@ func TestStartDeploymentStopsWhenDeploymentCheckFails(t *testing.T) {
 	}
 }
 
+// Техника: переходы состояний при конкурентном конфликте.
 func TestStartDeploymentRemovesNewContainerAfterConcurrentDuplicate(t *testing.T) {
 	repo := &deploymentRepository{create: func(context.Context, domain.Deployment) (domain.Deployment, error) {
 		return domain.Deployment{}, domain.ErrDeploymentAlreadyExists
@@ -108,6 +112,7 @@ func TestStartDeploymentRemovesNewContainerAfterConcurrentDuplicate(t *testing.T
 	}
 }
 
+// Техника: класс успешно сохранённой записи.
 func TestStartDeploymentReturnsDeploymentFromRepository(t *testing.T) {
 	var expected domain.Deployment
 	repo := &deploymentRepository{create: func(_ context.Context, deployment domain.Deployment) (domain.Deployment, error) {
@@ -125,6 +130,7 @@ func TestStartDeploymentReturnsDeploymentFromRepository(t *testing.T) {
 	}
 }
 
+// Техника: класс ошибки создания контейнера.
 func TestStartDeploymentDoesNotSaveFailedContainer(t *testing.T) {
 	failure := errors.New("Docker unavailable")
 	runtime := &deploymentRuntime{createErr: failure}
@@ -138,6 +144,7 @@ func TestStartDeploymentDoesNotSaveFailedContainer(t *testing.T) {
 	}
 }
 
+// Техника: классы эквивалентности ошибок сохранения и очистки.
 func TestStartDeploymentRemovesContainerWhenPersistenceFails(t *testing.T) {
 	failure := errors.New("database write failed")
 	for _, cleanupFailure := range []error{nil, errdefs.ErrNotFound, errors.New("Docker remove failed")} {
@@ -164,6 +171,7 @@ func TestStartDeploymentRemovesContainerWhenPersistenceFails(t *testing.T) {
 	}
 }
 
+// Техника: класс отсутствующей зависимости БД.
 func TestStartDeploymentRequiresDatabaseBeforeCreatingContainer(t *testing.T) {
 	runtime := &deploymentRuntime{}
 	svc := service.NewDeploymentService(nil, config.ServiceConfig{}, runtime)
@@ -236,4 +244,59 @@ func (r *deploymentRuntime) RemoveContainer(ctx context.Context, id string) erro
 	r.cleanupCanceled = ctx.Err() != nil
 	_, r.cleanupHasDeadline = ctx.Deadline()
 	return r.removeErr
+}
+
+// Техника: классы эквивалентности результата зависимости и границы входных данных.
+func TestDeploymentUseCases(t *testing.T) {
+	for _, method := range []string{"init", "get id", "get name", "stop"} {
+		for _, valid := range []bool{true, false} {
+			t.Run(method+map[bool]string{true: "/valid", false: "/invalid"}[valid], func(t *testing.T) {
+				d := testutil.DeploymentMother{}.Running()
+				failure := errors.New("runtime unavailable")
+				repo := &testutil.MockDeploymentRepository{GetDeploymentByIDFunc: func(context.Context, uuid.UUID) (domain.Deployment, error) { return d, nil }, GetDeploymentByNameFunc: func(context.Context, string) (domain.Deployment, error) { return d, nil }}
+				rt := &testutil.MockRuntimeClient{EnsureImageFunc: func(context.Context, string) error {
+					if !valid {
+						return failure
+					}
+					return nil
+				}, StopContainerFunc: func(context.Context, string) error {
+					if !valid {
+						return failure
+					}
+					return nil
+				}}
+				svc := service.NewDeploymentService(repo, config.ServiceConfig{}, rt)
+				var err, want error
+				switch method {
+				case "init":
+					err = svc.Init(context.Background())
+					if !valid {
+						want = failure
+					}
+				case "get id":
+					id := d.ID
+					if !valid {
+						id = uuid.Nil
+						want = domain.ErrInvalidDeploymentID
+					}
+					_, err = svc.GetDeploymentByID(context.Background(), id)
+				case "get name":
+					name := "demo"
+					if !valid {
+						name = ""
+						want = domain.ErrInvalidDeploymentName
+					}
+					_, err = svc.GetDeploymentByName(context.Background(), name)
+				case "stop":
+					err = svc.StopDeployment(context.Background(), d.ID)
+					if !valid {
+						want = failure
+					}
+				}
+				if !errors.Is(err, want) {
+					t.Fatalf("err=%v want=%v", err, want)
+				}
+			})
+		}
+	}
 }

@@ -18,4 +18,6 @@ type Deployment struct {
 	DeploymentName string
 	Status         string
 	Spec           []byte
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
 }

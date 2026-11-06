@@ -1,16 +1,22 @@
 package handler
 
-import "time"
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"time"
+)
 
 type RegisterInput struct {
 	Body RegisterRequest
 }
 
 type RegisterRequest struct {
-	Firstname string `json:"firstname" minLength:"1" pattern:"\\S" doc:"Имя пользователя" example:"Иван"`
+	Login     string `json:"login" minLength:"3" maxLength:"32" pattern:"^[a-z][a-z0-9_-]{2,31}$" doc:"Уникальный внешний логин пользователя" example:"yurii_popov"`
+	Firstname string `json:"firstname" minLength:"1" pattern:"\\S" doc:"Имя пользователя" example:"Юрий"`
 	Lastname  string `json:"lastname" minLength:"1" pattern:"\\S" doc:"Фамилия пользователя" example:"Попов"`
 	Email     string `json:"email" format:"email" doc:"Email пользователя" example:"user@example.com"`
-	Password  string `json:"password" format:"password" writeOnly:"true" minLength:"12" maxLength:"72" doc:"Пароль пользователя"`
+	Password  string `json:"password" format:"password" writeOnly:"true" minLength:"8" maxLength:"72" doc:"Пароль пользователя"`
 }
 
 type RegisterOutput struct {
@@ -18,10 +24,12 @@ type RegisterOutput struct {
 }
 
 type RegisteredUserResponse struct {
-	Firstname string `json:"firstname" doc:"Имя пользователя"`
-	Lastname  string `json:"lastname" doc:"Фамилия пользователя"`
-	ID        string `json:"id" doc:"Идентификатор пользователя" example:"0197eb5a-37c6-7e48-8cd6-0c19edcd72f1"`
-	Email     string `json:"email" format:"email" doc:"Email пользователя" example:"user@example.com"`
+	Login        string `json:"login" doc:"Уникальный внешний логин пользователя"`
+	PlatformRole string `json:"platform_role,omitempty" doc:"Роль платформы для владельца и администратора"`
+	Firstname    string `json:"firstname" doc:"Имя пользователя"`
+	Lastname     string `json:"lastname" doc:"Фамилия пользователя"`
+	ID           string `json:"id" doc:"Идентификатор пользователя" example:"0197eb5a-37c6-7e48-8cd6-0c19edcd72f1"`
+	Email        string `json:"email" format:"email" doc:"Email пользователя" example:"user@example.com"`
 }
 
 type LoginInput struct {
@@ -29,13 +37,21 @@ type LoginInput struct {
 }
 
 type LoginRequest struct {
-	Email    string `json:"email" format:"email" doc:"Email пользователя" example:"user@example.com"`
-	Password string `json:"password" format:"password" minLength:"12" maxLength:"72" doc:"Пароль пользователя"`
+	Login    string `json:"login" minLength:"3" maxLength:"32" pattern:"^[a-z][a-z0-9_-]{2,31}$" doc:"Логин пользователя" example:"yurii_popov"`
+	Password string `json:"password" format:"password" minLength:"8" maxLength:"72" doc:"Пароль пользователя"`
 }
 
 type LoginOutput struct {
 	Body AccessTokenResponse
 }
+
+type ProjectTokenInput struct {
+	Body struct {
+		ProjectName string `json:"project_name" minLength:"1" doc:"Имя проекта для ограниченного гранта"`
+	}
+}
+
+type ProjectTokenOutput struct{ Body AccessTokenResponse }
 
 type UpdateUserInput struct {
 	ID   string `path:"id" format:"uuid" doc:"Идентификатор пользователя"`
@@ -46,7 +62,28 @@ type UpdateUserRequest struct {
 	Firstname *string `json:"firstname,omitempty" doc:"Имя пользователя"`
 	Lastname  *string `json:"lastname,omitempty" doc:"Фамилия пользователя"`
 	Email     *string `json:"email,omitempty" format:"email" doc:"Новый email пользователя" example:"user@example.com"`
-	Password  *string `json:"password,omitempty" format:"password" writeOnly:"true" minLength:"12" maxLength:"72" doc:"Новый пароль пользователя"`
+	Password  *string `json:"password,omitempty" format:"password" writeOnly:"true" minLength:"8" maxLength:"72" doc:"Новый пароль пользователя"`
+}
+
+func (r *UpdateUserRequest) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for name, raw := range fields {
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return fmt.Errorf("%s cannot be null", name)
+		}
+	}
+	type plain UpdateUserRequest
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var decoded plain
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*r = UpdateUserRequest(decoded)
+	return nil
 }
 
 type UpdateUserOutput struct {
@@ -68,6 +105,9 @@ type DeleteUserOutput struct{}
 
 type GetUserInput struct {
 	ID string `path:"id" format:"uuid" doc:"Идентификатор пользователя"`
+}
+type GetUserByLoginInput struct {
+	Login string `path:"login" minLength:"3" maxLength:"32" pattern:"^[a-z][a-z0-9_-]{2,31}$"`
 }
 
 type GetUserOutput struct {
@@ -98,7 +138,7 @@ type CreateProjectRequest struct {
 }
 
 type GetProjectInput struct {
-	ID string `path:"id" format:"uuid" doc:"Идентификатор проекта"`
+	Name string `path:"project_name" doc:"Имя проекта"`
 }
 
 type ProjectOutput struct {
@@ -112,12 +152,11 @@ type ProjectResponse struct {
 }
 
 type UpdateProjectInput struct {
-	ID   string `path:"id" format:"uuid" doc:"Идентификатор проекта"`
+	Name string `path:"project_name" doc:"Имя проекта"`
 	Body UpdateProjectRequest
 }
 
 type UpdateProjectRequest struct {
-	Name        *string `json:"name,omitempty" doc:"Новое название проекта"`
 	Description *string `json:"description,omitempty" doc:"Новое описание проекта"`
 }
 
@@ -126,7 +165,7 @@ type UpdateProjectOutput struct {
 }
 
 type DeleteProjectInput struct {
-	ID string `path:"id" format:"uuid" doc:"Идентификатор проекта"`
+	Name string `path:"project_name" doc:"Имя проекта"`
 }
 
 // DeleteProjectOutput is intentionally empty: successful deletion returns 204.
@@ -147,13 +186,46 @@ type ListProjectsResponse struct {
 	NextPageToken *int              `json:"nextpagetoken" doc:"Следующий offset; null на последней странице"`
 }
 
+type MemberPathInput struct {
+	Name   string `path:"project_name"`
+	UserID string `path:"user_id" format:"uuid"`
+}
+type PutMemberInput struct {
+	Name   string `path:"project_name"`
+	UserID string `path:"user_id" format:"uuid"`
+	Body   struct {
+		RoleID int `json:"role_id" minimum:"1"`
+	}
+}
+type PutMemberOutput struct{ Status int }
+type DeleteMemberOutput struct{}
+type ListMembersInput struct {
+	Name   string `path:"project_name"`
+	Offset int    `query:"offset" minimum:"0" default:"0"`
+	Limit  int    `query:"limit" minimum:"1" maximum:"100" default:"20"`
+}
+type MemberResponse struct {
+	UserID    string `json:"user_id"`
+	Email     string `json:"email"`
+	Firstname string `json:"firstname"`
+	Lastname  string `json:"lastname"`
+	RoleID    int    `json:"role_id"`
+	RoleName  string `json:"role_name"`
+}
+type ListMembersOutput struct {
+	Body struct {
+		Members       []MemberResponse `json:"members"`
+		NextPageToken *int             `json:"nextpagetoken"`
+	}
+}
+
 type CreateRoleInput struct {
 	Body CreateRoleRequest
 }
 
 type CreateRoleRequest struct {
 	Name             string `json:"name" minLength:"1" doc:"Название роли" example:"editor"`
-	AllPermissions   bool   `json:"all_permissions" doc:"Имеет ли роль все разрешения"`
+	AllPermissions   bool   `json:"all_permissions,omitempty" doc:"Имеет ли роль все разрешения"`
 	CanReadProject   bool   `json:"can_read_project,omitempty" doc:"Просмотр проекта"`
 	CanUpdateProject bool   `json:"can_update_project,omitempty" doc:"Изменение проекта"`
 	CanDeleteProject bool   `json:"can_delete_project,omitempty" doc:"Удаление проекта"`
@@ -196,12 +268,41 @@ type UpdateRoleRequest struct {
 	CanStopModel     *bool   `json:"can_stop_model,omitempty" doc:"Остановка модели"`
 }
 
+func (r *UpdateRoleRequest) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for name, raw := range fields {
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return fmt.Errorf("%s cannot be null", name)
+		}
+	}
+	type plain UpdateRoleRequest
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var decoded plain
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+	*r = UpdateRoleRequest(decoded)
+	return nil
+}
+
 type DeleteRoleInput struct {
 	ID int `path:"id" minimum:"1" doc:"Идентификатор роли"`
 }
 
 // DeleteRoleOutput is intentionally empty: successful deletion returns 204.
 type DeleteRoleOutput struct{}
+
+type SetPlatformRoleInput struct {
+	ID   string `path:"id" format:"uuid" doc:"Идентификатор пользователя"`
+	Body SetPlatformRoleRequest
+}
+type SetPlatformRoleRequest struct {
+	PlatformRole string `json:"platform_role" enum:"user,analyst,admin" doc:"Глобальная роль платформы"`
+}
 
 type RoleOutput struct {
 	Body RoleResponse

@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
@@ -32,13 +33,19 @@ func NewRouter(authHandler *handler.AuthHandler, userHandler *handler.UserHandle
 	api := humago.New(mux, config)
 	authentication := authHandler.Middleware(api)
 	mux.HandleFunc("GET /internal/auth", authHandler.Authenticate)
+	mux.HandleFunc("GET /.well-known/jwks.json", authHandler.JWKS)
 
 	registerAuthRoutes(api, authHandler)
 	registerUserRoutes(api, userHandler, authentication)
 	registerProjectRoutes(api, projectHandler, authentication)
 	registerRoleRoutes(api, roleHandler, authentication)
 
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/users" || strings.HasPrefix(r.URL.Path, "/api/v1/users/") || r.URL.Path == "/api/v1/projects" || strings.HasPrefix(r.URL.Path, "/api/v1/projects/") {
+			w.Header().Set("Cache-Control", "no-store")
+		}
+		mux.ServeHTTP(w, r)
+	})
 }
 
 func omitRegistrationErrorValues(ctx huma.Context, _ string, value any) (any, error) {
@@ -72,6 +79,12 @@ func registerAuthRoutes(api huma.API, authHandler *handler.AuthHandler) {
 		Summary:     "Вход пользователя",
 		Tags:        []string{"Auth"},
 	}, authHandler.Login)
+
+	huma.Register(api, huma.Operation{
+		OperationID: "createProjectToken", Method: http.MethodPost, Path: apiPrefix + "/auth/project-token",
+		Summary: "Выпуск JWT с грантом одного проекта", Tags: []string{"Auth"},
+		Security: []map[string][]string{{"bearerAuth": {}}}, Middlewares: huma.Middlewares{authHandler.Middleware(api)},
+	}, authHandler.ProjectToken)
 }
 
 func registerUserRoutes(api huma.API, userHandler *handler.UserHandler, authentication handler.AuthMiddleware) {
@@ -111,15 +124,35 @@ func registerUserRoutes(api huma.API, userHandler *handler.UserHandler, authenti
 	}, userHandler.DeleteUser)
 
 	huma.Register(api, huma.Operation{
+		OperationID: "getUserByLogin",
+		Method:      http.MethodGet,
+		Path:        apiPrefix + "/users/by-login/{login}",
+		Summary:     "Получение пользователя по login",
+		Tags:        []string{"User"},
+		Security:    []map[string][]string{{"bearerAuth": {}}},
+		Errors:      []int{http.StatusUnauthorized, http.StatusNotFound},
+		Middlewares: huma.Middlewares{authentication},
+	}, userHandler.GetUserByLogin)
+
+	huma.Register(api, huma.Operation{
 		OperationID: "getUser",
 		Method:      http.MethodGet,
 		Path:        apiPrefix + "/users/{id}",
 		Summary:     "Получение пользователя по id",
 		Tags:        []string{"User"},
 		Security:    []map[string][]string{{"bearerAuth": {}}},
-		Errors:      []int{http.StatusUnauthorized, http.StatusNotImplemented},
+		Errors:      []int{http.StatusUnauthorized, http.StatusNotFound},
 		Middlewares: huma.Middlewares{authentication},
 	}, userHandler.GetUserByID)
+
+	if userHandler.HasPlatformRoleService() {
+		huma.Register(api, huma.Operation{
+			OperationID: "setPlatformRole", Method: http.MethodPut,
+			Path: apiPrefix + "/users/{id}/platform-role", Summary: "Назначение глобальной роли",
+			Tags: []string{"User"}, Security: []map[string][]string{{"bearerAuth": {}}},
+			Middlewares: huma.Middlewares{authentication},
+		}, userHandler.SetPlatformRole)
+	}
 }
 
 func registerProjectRoutes(api huma.API, projectHandler *handler.ProjectHandler, authentication handler.AuthMiddleware) {
@@ -137,8 +170,8 @@ func registerProjectRoutes(api huma.API, projectHandler *handler.ProjectHandler,
 	huma.Register(api, huma.Operation{
 		OperationID: "getProject",
 		Method:      http.MethodGet,
-		Path:        apiPrefix + "/projects/{id}",
-		Summary:     "Получение проекта по идентификатору",
+		Path:        apiPrefix + "/projects/{project_name}",
+		Summary:     "Получение проекта по имени",
 		Tags:        []string{"Project"},
 		Security:    []map[string][]string{{"bearerAuth": {}}},
 		Middlewares: huma.Middlewares{authentication},
@@ -147,7 +180,7 @@ func registerProjectRoutes(api huma.API, projectHandler *handler.ProjectHandler,
 	huma.Register(api, huma.Operation{
 		OperationID: "updateProject",
 		Method:      http.MethodPatch,
-		Path:        apiPrefix + "/projects/{id}",
+		Path:        apiPrefix + "/projects/{project_name}",
 		Summary:     "Частичное обновление информации о проекте",
 		Tags:        []string{"Project"},
 		Security:    []map[string][]string{{"bearerAuth": {}}},
@@ -157,7 +190,7 @@ func registerProjectRoutes(api huma.API, projectHandler *handler.ProjectHandler,
 	huma.Register(api, huma.Operation{
 		OperationID:   "deleteProject",
 		Method:        http.MethodDelete,
-		Path:          apiPrefix + "/projects/{id}",
+		Path:          apiPrefix + "/projects/{project_name}",
 		Summary:       "Удаление проекта",
 		Tags:          []string{"Project"},
 		DefaultStatus: http.StatusNoContent,
@@ -176,6 +209,20 @@ func registerProjectRoutes(api huma.API, projectHandler *handler.ProjectHandler,
 		Security:    []map[string][]string{{"bearerAuth": {}}},
 		Middlewares: huma.Middlewares{authentication},
 	}, projectHandler.ListProjects)
+	huma.Register(api, huma.Operation{OperationID: "listProjectMembers", Method: http.MethodGet, Path: apiPrefix + "/projects/{project_name}/members", Tags: []string{"Project"}, Security: []map[string][]string{{"bearerAuth": {}}}, Middlewares: huma.Middlewares{authentication}}, projectHandler.ListMembers)
+	huma.Register(api, huma.Operation{
+		OperationID: "putProjectMember", Method: http.MethodPut,
+		Path:          apiPrefix + "/projects/{project_name}/members/{user_id}",
+		DefaultStatus: http.StatusOK,
+		Responses: map[string]*huma.Response{
+			"200": {Description: "Роль участника назначена или уже была назначена"},
+			"201": {Description: "Участник добавлен в проект"},
+		},
+		Errors: []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity, http.StatusInternalServerError},
+		Tags:   []string{"Project"}, Security: []map[string][]string{{"bearerAuth": {}}}, Middlewares: huma.Middlewares{authentication},
+	}, projectHandler.PutMember)
+	huma.Register(api, huma.Operation{OperationID: "deleteProjectMember", Method: http.MethodDelete, Path: apiPrefix + "/projects/{project_name}/members/{user_id}", DefaultStatus: http.StatusNoContent, Tags: []string{"Project"}, Security: []map[string][]string{{"bearerAuth": {}}}, Middlewares: huma.Middlewares{authentication}}, projectHandler.DeleteMember)
+
 }
 
 func registerRoleRoutes(api huma.API, roleHandler *handler.RoleHandler, authentication handler.AuthMiddleware) {

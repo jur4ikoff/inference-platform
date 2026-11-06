@@ -1,36 +1,73 @@
 package infrastructure
 
 import (
-	"encoding/base64"
-	"encoding/json"
-	"strings"
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"testing"
 	"time"
+
+	"github.com/jur4ikoff/user-service/internal/domain"
+	"github.com/jur4ikoff/user-service/internal/service"
+	"github.com/jur4ikoff/utils/authjwt"
 )
 
-func TestAccessTokenIdentifiesUserWithoutGlobalRole(t *testing.T) {
-	manager := NewTokenManager("test-secret", "test")
-	expiresAt := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
-	token, err := manager.CreateAccessToken("user-id", expiresAt)
+// Техника: классы эквивалентности корректной и некорректной подписи токена.
+func TestAccessTokenIsIndependentlyVerifiedByPublicJWK(t *testing.T) {
+	private, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := base64.RawURLEncoding.DecodeString(strings.Split(token, ".")[1])
+	manager, err := NewTokenManager(private, "test-key", "test", "platform")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var claims map[string]any
-	if err := json.Unmarshal(payload, &claims); err != nil {
+	expiresAt := time.Now().UTC().Add(time.Minute)
+	userID := domain.UserID("0197eb5a-37c6-7e48-8cd6-0c19edcd72f1")
+	token, err := manager.CreateAccessToken(service.Session{UserID: userID, Username: "alice", PlatformRole: domain.PlatformRoleUser, AuthTime: time.Now().UTC()}, nil, expiresAt)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := claims["role"]; exists {
-		t.Fatal("user token must not contain a global role")
+	keys, err := manager.PublicJWKSet()
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, err := authjwt.Verify(token, keys, "test", "platform", time.Now().UTC(), 0)
+	if err != nil || claims.Project != nil || claims.PlatformRole != "user" || claims.Username != "alice" {
+		t.Fatalf("independent verification: claims=%+v error=%v", claims, err)
 	}
 	principal, err := manager.ParseAccessToken(token)
-	if err != nil || principal.UserID != "user-id" || !principal.ExpiresAt.Equal(expiresAt) {
+	if err != nil || principal.UserID != userID || principal.Username != "alice" || principal.PlatformRole != domain.PlatformRoleUser {
 		t.Fatalf("token round trip: principal=%+v error=%v", principal, err)
 	}
-	if _, err := NewTokenManager("another-secret", "test").ParseAccessToken(token); err == nil {
+	projectTokens := service.NewProjectTokenService(testProjectGrant{}, manager, time.Minute, testTokenClock{})
+	projectToken, err := projectTokens.Create(service.WithPrincipal(context.Background(), principal), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectClaims, err := authjwt.Verify(projectToken.Value, keys, "test", "platform", time.Now().UTC(), 0)
+	if err != nil || projectClaims.Username != "alice" || projectClaims.Project == nil || projectClaims.Project.Name != "demo" {
+		t.Fatalf("project token: claims=%+v error=%v", projectClaims, err)
+	}
+	otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := NewTokenManager(otherKey, "other-key", "test", "platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.ParseAccessToken(token); err == nil {
 		t.Fatal("token with an invalid signature was accepted")
 	}
 }
+
+type testProjectGrant struct{}
+
+func (testProjectGrant) ProjectTokenGrant(_ context.Context, _ domain.UserID, name string) (authjwt.ProjectGrant, error) {
+	return authjwt.ProjectGrant{Name: name, Role: "developer"}, nil
+}
+
+type testTokenClock struct{}
+
+func (testTokenClock) Now() time.Time { return time.Now() }

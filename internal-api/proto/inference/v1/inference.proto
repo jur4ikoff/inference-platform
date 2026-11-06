@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package inference.v1;
 
+import "google/protobuf/timestamp.proto";
+
 option go_package = "github.com/jur4ikoff/internal-api/gen/go/inference/v1;inferencev1";
 
 service InferenceService {
@@ -43,6 +45,8 @@ message Deployment {
   string deployment_name = 7;
   ModelStatus status = 8;
   DeploymentSpec spec = 9;
+  google.protobuf.Timestamp started_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
 }
 
 message StartDeploymentRequest {
@@ -50,7 +54,7 @@ message StartDeploymentRequest {
 
   string project = 1;
   string model_id = 2;
-  string user_id = 3;
+  string username = 3;
   string deployment_name = 4;
   DeploymentSpec spec = 6;
 }

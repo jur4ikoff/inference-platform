@@ -14,7 +14,7 @@ HTTP-префикс `/api/v1` для gRPC не используется.
 
 | RPC | Запрос | Ответ |
 | --- | --- | --- |
-| `StartDeployment` | `project`, `model_id`, `user_id`, `deployment_name`, `spec` | `state` |
+| `StartDeployment` | `project`, `model_id`, `username`, `deployment_name`, `spec` | `state` |
 | `StopDeployment` | `deployment_id` | пустой ответ после Docker Stop |
 | `GetDeploymentByID` | `deployment_id` | `deployment`: полная запись из БД |
 | `GetDeploymentByName` | `name` | `deployment`: полная запись из БД |
@@ -25,8 +25,8 @@ HTTP-префикс `/api/v1` для gRPC не используется.
 Enum покрывает все доменные статусы: `PENDING`, `STARTING`, `STARTED`, `RUNNING`,
 `STOPPING`, `STOPPED`, `FAILED` и `UNKNOWN` (с префиксом `MODEL_STATUS_`).
 
-Для `StartDeployment` обязательны все пять полей. `model_id` и `user_id` должны быть
-ненулевыми UUID. `model-service` передаёт ID владельца, имя и спецификацию из
+Для `StartDeployment` обязательны все пять полей. `model_id` должен быть ненулевым UUID, а `username` — непустой строкой.
+`model-service` передаёт имя пользователя, имя и спецификацию из
 записи модели. В `deployment_name` клиент model-service по умолчанию передаёт
 имя модели. При прямом вызове RPC публичное имя deployment задаёт вызывающий.
 `inference-service` преобразует запрос в `StartDeploymentCommand`.
@@ -66,8 +66,7 @@ Docker-контейнера со случайным суффиксом. Поле
 
 `ListDeployments` возвращает только `PENDING`, `STARTING`, `STARTED` и `RUNNING`.
 `ListAllDeployments` возвращает записи во всех допустимых статусах, включая
-остановленные и завершившиеся ошибкой. В обоих методах записи отсортированы
-по `id` по возрастанию, а параметры пагинации одинаковы:
+остановленные и завершившиеся ошибкой. `ListDeployments` сортирует записи по `id`, а `ListAllDeployments` — по времени создания от новых к старым. Параметры пагинации одинаковы:
 
 - `offset` — число пропускаемых записей; по умолчанию `0`.
 - `limit` — размер страницы от `1` до `100`; отсутствующее значение или `0` означает `20`.
@@ -128,7 +127,7 @@ Reflection включён по умолчанию, поэтому grpcurl пол
 
 ```sh
 grpcurl -plaintext localhost:9091 list
-grpcurl -plaintext -d '{"project":"PROJECT_NAME","modelId":"MODEL_ID","userId":"USER_ID","deploymentName":"qwen-small","spec":{"providerType":"HUGGING_FACE","providerHuggingFace":{"repo":"Qwen/Qwen2.5-0.5B-Instruct-GGUF:Q4_K_M"}}}' \
+grpcurl -plaintext -d '{"project":"PROJECT_NAME","modelId":"MODEL_ID","username":"alice","deploymentName":"qwen-small","spec":{"providerType":"HUGGING_FACE","providerHuggingFace":{"repo":"Qwen/Qwen2.5-0.5B-Instruct-GGUF:Q4_K_M"}}}' \
   localhost:9091 inference.v1.InferenceService/StartDeployment
 grpcurl -plaintext -d '{"deploymentId":"DEPLOYMENT_ID"}' \
   localhost:9091 inference.v1.InferenceService/GetDeploymentByID
@@ -153,3 +152,5 @@ grpcurl -plaintext -d '{"service":"inference.v1.InferenceService"}' \
 
 Порядок генерации описан в [документации Buf](https://buf.build/docs/generate/usage/),
 работа со сгенерированным сервером — в [руководстве gRPC Go](https://grpc.io/docs/languages/go/basics/).
+
+В deployment `started_at` — время создания записи запуска, а `updated_at` — время создания или последнего изменения статуса. Неизвестные для старых записей значения не передаются.

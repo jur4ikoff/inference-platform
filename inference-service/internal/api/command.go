@@ -19,9 +19,9 @@ func startDeploymentCommand(request *inferencev1.StartDeploymentRequest) (servic
 	if err != nil || modelID == uuid.Nil {
 		return service.StartDeploymentCommand{}, status.Error(codes.InvalidArgument, "model_id must be a non-zero UUID")
 	}
-	userID, err := uuid.Parse(request.GetUserId())
-	if err != nil || userID == uuid.Nil {
-		return service.StartDeploymentCommand{}, status.Error(codes.InvalidArgument, "user_id must be a non-zero UUID")
+	username := strings.TrimSpace(request.GetUsername())
+	if username == "" {
+		return service.StartDeploymentCommand{}, status.Error(codes.InvalidArgument, "username is required")
 	}
 	deploymentName := strings.TrimSpace(request.GetDeploymentName())
 	if deploymentName == "" {
@@ -46,7 +46,7 @@ func startDeploymentCommand(request *inferencev1.StartDeploymentRequest) (servic
 	}
 	return service.StartDeploymentCommand{
 		Project:        strings.TrimSpace(request.GetProject()),
-		UserID:         userID,
+		Username:       username,
 		ModelID:        modelID,
 		DeploymentName: deploymentName,
 		Spec: domain.DeploymentSpec{

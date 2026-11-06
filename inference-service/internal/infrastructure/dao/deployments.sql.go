@@ -36,7 +36,7 @@ const createDeployment = `-- name: CreateDeployment :one
 INSERT INTO deployments (
     id, container_id, model_id, project, username, name, deployment_name, status, spec
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, container_id, model_id, project, username, name, deployment_name, status, spec
+RETURNING id, container_id, model_id, project, username, name, deployment_name, status, spec, created_at, updated_at
 `
 
 type CreateDeploymentParams struct {
@@ -74,12 +74,14 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.DeploymentName,
 		&i.Status,
 		&i.Spec,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const getDeploymentByID = `-- name: GetDeploymentByID :one
-SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec
+SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec, created_at, updated_at
 FROM deployments WHERE id = $1
 `
 
@@ -96,12 +98,14 @@ func (q *Queries) GetDeploymentByID(ctx context.Context, id pgtype.UUID) (Deploy
 		&i.DeploymentName,
 		&i.Status,
 		&i.Spec,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const getDeploymentByName = `-- name: GetDeploymentByName :one
-SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec
+SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec, created_at, updated_at
 FROM deployments WHERE name = $1
 `
 
@@ -118,6 +122,8 @@ func (q *Queries) GetDeploymentByName(ctx context.Context, name string) (Deploym
 		&i.DeploymentName,
 		&i.Status,
 		&i.Spec,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -150,9 +156,9 @@ func (q *Queries) GetDeploymentState(ctx context.Context, containerID string) (G
 }
 
 const listAllDeployments = `-- name: ListAllDeployments :many
-SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec
+SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec, created_at, updated_at
 FROM deployments
-ORDER BY id
+ORDER BY created_at DESC NULLS LAST, id DESC
 LIMIT $2::integer OFFSET $1::integer
 `
 
@@ -180,6 +186,8 @@ func (q *Queries) ListAllDeployments(ctx context.Context, arg ListAllDeployments
 			&i.DeploymentName,
 			&i.Status,
 			&i.Spec,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -232,7 +240,7 @@ func (q *Queries) ListDeploymentStates(ctx context.Context) ([]ListDeploymentSta
 }
 
 const listDeployments = `-- name: ListDeployments :many
-SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec
+SELECT id, container_id, model_id, project, username, name, deployment_name, status, spec, created_at, updated_at
 FROM deployments
 WHERE status = ANY($1::text[])
 ORDER BY id
@@ -264,6 +272,8 @@ func (q *Queries) ListDeployments(ctx context.Context, arg ListDeploymentsParams
 			&i.DeploymentName,
 			&i.Status,
 			&i.Spec,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -277,7 +287,7 @@ func (q *Queries) ListDeployments(ctx context.Context, arg ListDeploymentsParams
 
 const updateDeploymentStatus = `-- name: UpdateDeploymentStatus :execrows
 UPDATE deployments
-SET status = $1
+SET status = $1, updated_at = clock_timestamp()
 WHERE id = $2
   AND container_id = $3
   AND status = $4

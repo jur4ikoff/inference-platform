@@ -17,7 +17,7 @@ func validStartDeploymentRequest() *inferencev1.StartDeploymentRequest {
 	return &inferencev1.StartDeploymentRequest{
 		Project:        "project-1",
 		ModelId:        "0197eb5a-37c6-7e48-8cd6-0c19edcd72f1",
-		UserId:         "0197eb5a-37c6-7e48-8cd6-0c19edcd72f2",
+		Username:       "alice",
 		DeploymentName: "qwen-small",
 		Spec: &inferencev1.DeploymentSpec{
 			ProviderType: "HUGGING_FACE",
@@ -28,6 +28,7 @@ func validStartDeploymentRequest() *inferencev1.StartDeploymentRequest {
 	}
 }
 
+// Техника: класс корректной protobuf-команды.
 func TestStartDeploymentCommandFromProtobuf(t *testing.T) {
 	request := validStartDeploymentRequest()
 	data, err := proto.Marshal(request)
@@ -42,7 +43,7 @@ func TestStartDeploymentCommandFromProtobuf(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if command.Project != request.Project || command.UserID.String() != request.UserId || command.ModelID.String() != request.ModelId || command.DeploymentName != request.DeploymentName {
+	if command.Project != request.Project || command.Username != request.Username || command.ModelID.String() != request.ModelId || command.DeploymentName != request.DeploymentName {
 		t.Fatalf("request identifiers were not preserved: %+v", command)
 	}
 	if command.Spec.ProviderType != domain.ModelProviderTypeHuggingFace || command.Spec.ProviderHuggingFace == nil || command.Spec.ProviderHuggingFace.Repo != "Qwen/model" {
@@ -50,42 +51,53 @@ func TestStartDeploymentCommandFromProtobuf(t *testing.T) {
 	}
 }
 
+// Техника: классы эквивалентности и граничные значения данных команды.
 func TestStartDeploymentRejectsInvalidCommandBeforeService(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		change func(*inferencev1.StartDeploymentRequest)
+	validSpec := &inferencev1.DeploymentSpec{
+		ProviderType:        "HUGGING_FACE",
+		ProviderHuggingFace: &inferencev1.HuggingFaceProvider{Repo: "Qwen/model"},
+	}
+	const modelID = "0197eb5a-37c6-7e48-8cd6-0c19edcd72f1"
+	tests := []struct {
+		name           string
+		project        string
+		modelID        string
+		username       string
+		deploymentName string
+		spec           *inferencev1.DeploymentSpec
 	}{
-		{"empty project", func(r *inferencev1.StartDeploymentRequest) { r.Project = " " }},
-		{"uppercase project", func(r *inferencev1.StartDeploymentRequest) { r.Project = "Demo" }},
-		{"project with underscore", func(r *inferencev1.StartDeploymentRequest) { r.Project = "demo_project" }},
-		{"project with dot", func(r *inferencev1.StartDeploymentRequest) { r.Project = "demo.project" }},
-		{"project with leading hyphen", func(r *inferencev1.StartDeploymentRequest) { r.Project = "-demo" }},
-		{"project with trailing hyphen", func(r *inferencev1.StartDeploymentRequest) { r.Project = "demo-" }},
-		{"project too long", func(r *inferencev1.StartDeploymentRequest) { r.Project = strings.Repeat("a", 64) }},
-		{"invalid model UUID", func(r *inferencev1.StartDeploymentRequest) { r.ModelId = "invalid" }},
-		{"zero model UUID", func(r *inferencev1.StartDeploymentRequest) { r.ModelId = uuid.Nil.String() }},
-		{"missing user UUID", func(r *inferencev1.StartDeploymentRequest) { r.UserId = "" }},
-		{"invalid user UUID", func(r *inferencev1.StartDeploymentRequest) { r.UserId = "invalid" }},
-		{"zero user UUID", func(r *inferencev1.StartDeploymentRequest) { r.UserId = uuid.Nil.String() }},
-		{"empty deployment name", func(r *inferencev1.StartDeploymentRequest) { r.DeploymentName = " " }},
-		{"uppercase deployment name", func(r *inferencev1.StartDeploymentRequest) { r.DeploymentName = "Qwen" }},
-		{"deployment name with underscore", func(r *inferencev1.StartDeploymentRequest) { r.DeploymentName = "qwen_small" }},
-		{"deployment name with dot", func(r *inferencev1.StartDeploymentRequest) { r.DeploymentName = "qwen.small" }},
-		{"deployment name with leading hyphen", func(r *inferencev1.StartDeploymentRequest) { r.DeploymentName = "-qwen" }},
-		{"deployment name with trailing hyphen", func(r *inferencev1.StartDeploymentRequest) { r.DeploymentName = "qwen-" }},
-		{"deployment name too long", func(r *inferencev1.StartDeploymentRequest) { r.DeploymentName = strings.Repeat("a", 64) }},
-		{"missing spec", func(r *inferencev1.StartDeploymentRequest) { r.Spec = nil }},
-		{"empty spec", func(r *inferencev1.StartDeploymentRequest) { r.Spec = &inferencev1.DeploymentSpec{} }},
-		{"unsupported provider", func(r *inferencev1.StartDeploymentRequest) { r.Spec.ProviderType = "OTHER" }},
-		{"missing provider settings", func(r *inferencev1.StartDeploymentRequest) { r.Spec.ProviderHuggingFace = nil }},
-		{"empty repository", func(r *inferencev1.StartDeploymentRequest) {
-			r.Spec.ProviderHuggingFace.Repo = " "
-		}},
-	} {
+		{"empty project", " ", modelID, "alice", "qwen-small", validSpec},
+		{"uppercase project", "Demo", modelID, "alice", "qwen-small", validSpec},
+		{"project with underscore", "demo_project", modelID, "alice", "qwen-small", validSpec},
+		{"project with dot", "demo.project", modelID, "alice", "qwen-small", validSpec},
+		{"project with leading hyphen", "-demo", modelID, "alice", "qwen-small", validSpec},
+		{"project with trailing hyphen", "demo-", modelID, "alice", "qwen-small", validSpec},
+		{"project too long", strings.Repeat("a", 64), modelID, "alice", "qwen-small", validSpec},
+		{"invalid model UUID", "project-1", "invalid", "alice", "qwen-small", validSpec},
+		{"zero model UUID", "project-1", uuid.Nil.String(), "alice", "qwen-small", validSpec},
+		{"missing username", "project-1", modelID, " ", "qwen-small", validSpec},
+		{"empty deployment name", "project-1", modelID, "alice", " ", validSpec},
+		{"uppercase deployment name", "project-1", modelID, "alice", "Qwen", validSpec},
+		{"deployment name with underscore", "project-1", modelID, "alice", "qwen_small", validSpec},
+		{"deployment name with dot", "project-1", modelID, "alice", "qwen.small", validSpec},
+		{"deployment name with leading hyphen", "project-1", modelID, "alice", "-qwen", validSpec},
+		{"deployment name with trailing hyphen", "project-1", modelID, "alice", "qwen-", validSpec},
+		{"deployment name too long", "project-1", modelID, "alice", strings.Repeat("a", 64), validSpec},
+		{"missing spec", "project-1", modelID, "alice", "qwen-small", nil},
+		{"empty spec", "project-1", modelID, "alice", "qwen-small", &inferencev1.DeploymentSpec{}},
+		{"unsupported provider", "project-1", modelID, "alice", "qwen-small", &inferencev1.DeploymentSpec{ProviderType: "OTHER", ProviderHuggingFace: &inferencev1.HuggingFaceProvider{Repo: "Qwen/model"}}},
+		{"missing provider settings", "project-1", modelID, "alice", "qwen-small", &inferencev1.DeploymentSpec{ProviderType: "HUGGING_FACE"}},
+		{"empty repository", "project-1", modelID, "alice", "qwen-small", &inferencev1.DeploymentSpec{ProviderType: "HUGGING_FACE", ProviderHuggingFace: &inferencev1.HuggingFaceProvider{Repo: " "}}},
+	}
+	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			request := validStartDeploymentRequest()
-			test.change(request)
-			// A nil service ensures invalid requests are rejected before any side effects.
+			request := &inferencev1.StartDeploymentRequest{
+				Project:        test.project,
+				ModelId:        test.modelID,
+				Username:       test.username,
+				DeploymentName: test.deploymentName,
+				Spec:           test.spec,
+			}
 			response, err := NewHandler(nil).StartDeployment(context.Background(), request)
 			if response != nil || status.Code(err) != codes.InvalidArgument {
 				t.Fatalf("expected InvalidArgument, got response=%v error=%v", response, err)

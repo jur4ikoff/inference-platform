@@ -2,7 +2,7 @@ version: "2"
 sql:
   - name: inference-service
     engine: postgresql
-    schema: postgres/schema.sql
+    schema: postgres/migrations
     queries: postgres/queries/inference-service
     gen:
       go:
@@ -10,3 +10,25 @@ sql:
         out: ../inference-service/internal/infrastructure/dao
         sql_package: pgx/v5
         emit_empty_slices: true
+        omit_unused_structs: true
+  - name: user-service
+    engine: postgresql
+    schema: postgres/migrations
+    queries: postgres/queries/user-service
+    gen:
+      go:
+        package: postgres
+        out: ../user-service/internal/infrastructure/dao
+        sql_package: pgx/v5
+        emit_empty_slices: true
+  - name: model-service
+    engine: postgresql
+    schema: postgres/migrations
+    queries: postgres/queries/model-service
+    gen:
+      go:
+        package: postgres
+        out: ../model-service/internal/infrastructure/dao
+        sql_package: pgx/v5
+        emit_empty_slices: true
+        omit_unused_structs: true
