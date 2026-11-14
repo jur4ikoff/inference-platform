@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/rs/zerolog/log"
 	"math"
 	"strconv"
 
@@ -20,11 +21,25 @@ type DeploymentsPage struct {
 	NextPageToken string
 }
 
-func (s *DeploymentService) ListDeployments(ctx context.Context, input ListDeploymentsInput) (DeploymentsPage, error) {
+func (s *DeploymentService) ListDeployments(ctx context.Context, input ListDeploymentsInput) (_ DeploymentsPage, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "DeploymentService").Msg("ListDeployments failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "DeploymentService").Msg("ListDeployments completed")
+	}()
 	return s.listDeployments(ctx, input, false)
 }
 
-func (s *DeploymentService) ListAllDeployments(ctx context.Context, input ListDeploymentsInput) (DeploymentsPage, error) {
+func (s *DeploymentService) ListAllDeployments(ctx context.Context, input ListDeploymentsInput) (_ DeploymentsPage, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "DeploymentService").Msg("ListAllDeployments failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "DeploymentService").Msg("ListAllDeployments completed")
+	}()
 	return s.listDeployments(ctx, input, true)
 }
 

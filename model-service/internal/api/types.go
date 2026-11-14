@@ -32,6 +32,12 @@ type modelInput struct {
 	ModelID string `path:"model_id" format:"uuid" doc:"Идентификатор модели"`
 }
 
+type createDeploymentInput struct {
+	Project        string `path:"project" minLength:"1" doc:"Имя проекта"`
+	ModelID        string `path:"model_id" format:"uuid" doc:"Идентификатор модели"`
+	IdempotencyKey string `header:"Idempotency-Key" required:"true" minLength:"1" maxLength:"128" doc:"Уникальный ключ для безопасного повторения запроса"`
+}
+
 type updateModelInput struct {
 	Project string `path:"project" minLength:"1" doc:"Имя проекта"`
 	ModelID string `path:"model_id" format:"uuid" doc:"Идентификатор модели"`

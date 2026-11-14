@@ -17,6 +17,7 @@ import (
 	"github.com/jur4ikoff/inference-service/internal/config"
 	"github.com/jur4ikoff/inference-service/internal/domain"
 	"github.com/rs/zerolog/log"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 //go:embed proxy_ui.js
@@ -92,6 +93,7 @@ func (r *ProxyManager) Upsert(deployment domain.DeploymentState, endpoint string
 		delete(r.routes, oldKey)
 	}
 	backend := &httputil.ReverseProxy{
+		Transport: otelhttp.NewTransport(http.DefaultTransport),
 		Rewrite: func(request *httputil.ProxyRequest) {
 			request.SetURL(target)
 			request.SetXForwarded()

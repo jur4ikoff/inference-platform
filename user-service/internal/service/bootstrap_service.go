@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"github.com/rs/zerolog/log"
 	"strings"
 
 	"github.com/jur4ikoff/user-service/internal/domain"
@@ -20,7 +21,14 @@ func NewBootstrapAdminService(repository BootstrapAdminRepository, hasher Passwo
 
 // Create creates the sole first administrator or returns the existing account
 // unchanged when the same admin is bootstrapped again.
-func (s *BootstrapAdminService) Create(ctx context.Context, input RegisterInput) (RegisteredUser, bool, error) {
+func (s *BootstrapAdminService) Create(ctx context.Context, input RegisterInput) (_ RegisteredUser, _ bool, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "BootstrapAdminService").Err(resultErr).Msg("Create failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "BootstrapAdminService").Msg("Create completed")
+	}()
 	email, err := normalizeEmail(input.Email)
 	login := strings.ToLower(strings.TrimSpace(input.Login))
 	firstname, lastname := strings.TrimSpace(input.Firstname), strings.TrimSpace(input.Lastname)

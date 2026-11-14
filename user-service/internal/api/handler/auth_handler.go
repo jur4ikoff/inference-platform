@@ -10,6 +10,7 @@ import (
 	"github.com/jur4ikoff/user-service/internal/domain"
 	"github.com/jur4ikoff/user-service/internal/service"
 	"github.com/jur4ikoff/utils/authjwt"
+	"github.com/rs/zerolog/log"
 )
 
 type authService interface {
@@ -51,9 +52,11 @@ func (h *AuthHandler) ProjectToken(ctx context.Context, input *ProjectTokenInput
 func (h *AuthHandler) JWKS(w http.ResponseWriter, r *http.Request) {
 	keys, err := h.authService.PublicJWKSet()
 	if err != nil {
+		log.Ctx(r.Context()).Error().Err(err).Msg("failed to load public keys")
 		http.Error(w, "service unavailable", http.StatusServiceUnavailable)
 		return
 	}
+	log.Ctx(r.Context()).Info().Msg("public keys loaded")
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	_ = json.NewEncoder(w).Encode(keys)

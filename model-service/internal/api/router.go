@@ -102,7 +102,7 @@ func (h *Handler) Router() http.Handler {
 		Method:        http.MethodPost,
 		Path:          apiPrefix + "/projects/{project}/models/{model_id}/deployment",
 		Summary:       "Запуск модели",
-		Description:   "Запускает существующую модель с её сохранённой спецификацией. Тело запроса не требуется. При успешном принятии возвращает 202, фактический ID deployment и его состояние.",
+		Description:   "Запускает существующую модель. Передайте уникальный Idempotency-Key и используйте его повторно для того же запроса. Тело запроса не требуется.",
 		Tags:          []string{"Deployment"},
 		Security:      authenticated,
 		DefaultStatus: http.StatusAccepted,

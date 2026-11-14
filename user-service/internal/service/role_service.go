@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"github.com/rs/zerolog/log"
 	"strings"
 
 	"github.com/jur4ikoff/user-service/internal/domain"
@@ -36,7 +37,14 @@ func normalizeRoleName(value string) (string, error) {
 	return value, nil
 }
 
-func (s *RoleService) CreateRole(ctx context.Context, role domain.Role) (domain.Role, error) {
+func (s *RoleService) CreateRole(ctx context.Context, role domain.Role) (_ domain.Role, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "RoleService").Err(resultErr).Msg("CreateRole failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "RoleService").Msg("CreateRole completed")
+	}()
 	actor, err := roleActor(ctx)
 	if err != nil {
 		return domain.Role{}, err
@@ -48,7 +56,14 @@ func (s *RoleService) CreateRole(ctx context.Context, role domain.Role) (domain.
 	return s.roles.Create(ctx, actor, role)
 }
 
-func (s *RoleService) GetRole(ctx context.Context, id domain.RoleID) (domain.Role, error) {
+func (s *RoleService) GetRole(ctx context.Context, id domain.RoleID) (_ domain.Role, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "RoleService").Err(resultErr).Msg("GetRole failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "RoleService").Msg("GetRole completed")
+	}()
 	if _, err := roleActor(ctx); err != nil {
 		return domain.Role{}, err
 	}
@@ -58,7 +73,14 @@ func (s *RoleService) GetRole(ctx context.Context, id domain.RoleID) (domain.Rol
 	return s.roles.Get(ctx, id)
 }
 
-func (s *RoleService) ListRoles(ctx context.Context, input ListRolesInput) (RolesPage, error) {
+func (s *RoleService) ListRoles(ctx context.Context, input ListRolesInput) (_ RolesPage, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "RoleService").Err(resultErr).Msg("ListRoles failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "RoleService").Msg("ListRoles completed")
+	}()
 	if _, err := roleActor(ctx); err != nil {
 		return RolesPage{}, err
 	}
@@ -79,7 +101,14 @@ func (s *RoleService) ListRoles(ctx context.Context, input ListRolesInput) (Role
 	return page, nil
 }
 
-func (s *RoleService) UpdateRole(ctx context.Context, id domain.RoleID, update domain.RoleUpdate) (domain.Role, error) {
+func (s *RoleService) UpdateRole(ctx context.Context, id domain.RoleID, update domain.RoleUpdate) (_ domain.Role, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "RoleService").Err(resultErr).Msg("UpdateRole failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "RoleService").Msg("UpdateRole completed")
+	}()
 	actor, err := roleActor(ctx)
 	if err != nil {
 		return domain.Role{}, err
@@ -100,7 +129,14 @@ func (s *RoleService) UpdateRole(ctx context.Context, id domain.RoleID, update d
 	return s.roles.Update(ctx, actor, id, update)
 }
 
-func (s *RoleService) DeleteRole(ctx context.Context, id domain.RoleID) error {
+func (s *RoleService) DeleteRole(ctx context.Context, id domain.RoleID) (resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "RoleService").Err(resultErr).Msg("DeleteRole failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "RoleService").Msg("DeleteRole completed")
+	}()
 	actor, err := roleActor(ctx)
 	if err != nil {
 		return err
@@ -116,7 +152,14 @@ type PlatformRoleService struct{ users PlatformRoleRepository }
 func NewPlatformRoleService(users PlatformRoleRepository) *PlatformRoleService {
 	return &PlatformRoleService{users: users}
 }
-func (s *PlatformRoleService) SetRole(ctx context.Context, target domain.UserID, role domain.PlatformRole) (RegisteredUser, error) {
+func (s *PlatformRoleService) SetRole(ctx context.Context, target domain.UserID, role domain.PlatformRole) (_ RegisteredUser, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "PlatformRoleService").Err(resultErr).Msg("SetRole failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "PlatformRoleService").Msg("SetRole completed")
+	}()
 	actor, err := roleActor(ctx)
 	if err != nil {
 		return RegisteredUser{}, err

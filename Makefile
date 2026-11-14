@@ -2,16 +2,16 @@
 
 COMPOSE_PROJECT := inference-platform
 COMPOSE := docker compose -p $(COMPOSE_PROJECT) --project-directory . --env-file infra/.env -f infra/docker-compose.yaml
-USER_SERVICE := user-service
-MODEL_SERVICE := model-service
-INFERENCE_SERVICE := inference-service
-INFRA_SERVICES := loki tempo otel-collector alloy grafana
+USER_SERVICE := user-service user-service-ro-1 user-service-ro-2 user-service-mirror
+MODEL_SERVICE := model-service model-service-ro-1 model-service-ro-2 model-service-mirror
+INFERENCE_SERVICE := inference-service inference-service-ro-1 inference-service-ro-2 inference-service-mirror
+INFRA_SERVICES := loki tempo otel-collector alloy prometheus grafana
 APPLICATION_SERVICES := $(USER_SERVICE) $(MODEL_SERVICE) $(INFERENCE_SERVICE) nginx adminer observability-service
 BUF := docker run --rm -v "$(CURDIR)/internal-api:/workspace" -w /workspace bufbuild/buf:1.61.0
 SQLC := docker run --rm -v "$(CURDIR):/src" -w /src sqlc/sqlc:1.31.1
 PREK ?= prek
 
-.PHONY: help up up-infra up-database up-services bootstrap-admin up-user up-model up-inference proto sql-generate sql-check build down restart restart-user restart-model restart-inference ps logs logs-user logs-model logs-inference logs-postgres logs-observability config test lint fmt
+.PHONY: help up up-infra up-database up-services bootstrap-admin up-user up-model up-inference locust replication-check proto sql-generate sql-check build down restart restart-user restart-model restart-inference ps logs logs-user logs-model logs-inference logs-postgres logs-observability config test lint fmt
 
 help: ## Показать доступные команды
 	@printf '%s\n' \
@@ -25,6 +25,8 @@ help: ## Показать доступные команды
 		'  up-user             Поднять user-service и его зависимости' \
 		'  up-model            Поднять model-service и его зависимости' \
 		'  up-inference        Поднять inference-service и его зависимости' \
+		'  locust              Поднять сервисы и веб-интерфейс Locust' \
+		'  replication-check   Проверить репликацию и запрет записи на standby' \
 		'  proto               Сгенерировать protobuf- и gRPC-стабы internal-api' \
 		'  sql-generate        Сгенерировать Go-обёртки SQL-запросов через sqlc' \
 		'  sql-check           Проверить SQL-запросы и схему для sqlc' \
@@ -43,6 +45,7 @@ help: ## Показать доступные команды
 		'  logs-observability  Смотреть логи Grafana, Loki, Tempo и OTel Collector' \
 		'  config              Проверить итоговую Docker Compose-конфигурацию' \
 		'  test                Запустить unit- и интеграционные тесты' \
+		'  generate-mocks      Сгенерировать тестовые моки inference-service' \
 		'  test-integration    Запустить интеграционные тесты с PostgreSQL' \
 		'  test-shuffle        Запустить unit-тесты в случайном порядке' \
 		'  test-coverage       Сформировать отчёты покрытия операторов' \
@@ -50,33 +53,42 @@ help: ## Показать доступные команды
 		'  lint                Запустить prek вручную для всех отслеживаемых файлов' \
 		'  fmt                 Отформатировать Go-код сервисов'
 
-up: ## Поднять инфраструктуру, БД с миграциями и сервисы
-	$(MAKE) up-infra
-	$(MAKE) up-services
+up: up-services ## Поднять инфраструктуру, БД с миграциями и сервисы
 
 up-infra: ## Поднять инфраструктуру наблюдаемости
 	$(COMPOSE) up -d --wait $(INFRA_SERVICES)
 
-up-database: ## Поднять PostgreSQL и применить миграции
+up-database: ## Поднять primary, применить миграции и запустить реплику PostgreSQL
 	$(COMPOSE) up -d --wait postgres
 	./infra/postgres/apply_migrations.sh
+	$(COMPOSE) up -d --wait postgres-2
 
-up-services: up-database ## Поднять БД с миграциями и прикладные сервисы
+up-services: up-infra up-database ## Поднять БД с миграциями и прикладные сервисы
 	$(COMPOSE) up -d --build --no-deps $(APPLICATION_SERVICES)
+	$(COMPOSE) exec -T nginx nginx -s reload
 
 bootstrap-admin: up-database ## Создать начального администратора из infra/.env
 	@set -a; . infra/.env; set +a; \
 	DATABASE_URL="postgres://$$POSTGRES_USER:$$POSTGRES_PASSWORD@localhost:5432/$$POSTGRES_DB?sslmode=disable" \
 	./scripts/bootstrap-admin.sh
 
-up-user: ## Поднять user-service и его зависимости
+up-user: up-database ## Поднять user-service и его зависимости
 	$(COMPOSE) up -d --build $(USER_SERVICE)
 
-up-model: ## Поднять model-service и его зависимости
+up-model: up-database ## Поднять model-service и его зависимости
 	$(COMPOSE) up -d --build $(MODEL_SERVICE)
 
 up-inference: up-database ## Поднять БД с миграциями и inference-service
 	$(COMPOSE) up -d --build $(INFERENCE_SERVICE)
+
+locust: bootstrap-admin up-services ## Поднять сервисы и веб-интерфейс Locust
+	@test -f stress-test/.env || cp stress-test/.env.example stress-test/.env
+	@mkdir -p stress-test/docker-results
+	docker compose --env-file infra/.env --env-file stress-test/.env -f stress-test/docker-compose.yaml up -d --scale locust-worker=$(or $(LOCUST_WORKERS),2) locust-ui locust-worker
+	@printf '%s\n' 'Locust UI: http://localhost:8089'
+
+replication-check: ## Проверить репликацию PostgreSQL
+	./infra/postgres/check_replication.sh
 
 
 
@@ -154,7 +166,10 @@ TEST_TOOLS := $(CURDIR)/.test-tools
 export PATH := $(TEST_TOOLS):$(PATH)
 export TEST_POSTGRES_PORT
 
-.PHONY: test-tools test-unit test-db-up test-db-down test-integration test-coverage test-branch-coverage
+.PHONY: generate-mocks test-tools test-unit test-db-up test-db-down test-integration test-coverage test-branch-coverage
+
+generate-mocks: ## Сгенерировать тестовые моки inference-service
+	cd inference-service && go generate ./internal/service ./internal/repository ./internal/manager
 
 test-tools: ## Установить инструменты тестовых отчётов
 	@mkdir -p $(TEST_TOOLS)

@@ -28,7 +28,7 @@ func validStartDeploymentRequest() *inferencev1.StartDeploymentRequest {
 	}
 }
 
-// Техника: класс корректной protobuf-команды.
+// Техника: разбиение на классы эквивалентности; случай корректной protobuf-команды.
 func TestStartDeploymentCommandFromProtobuf(t *testing.T) {
 	request := validStartDeploymentRequest()
 	data, err := proto.Marshal(request)
@@ -51,7 +51,7 @@ func TestStartDeploymentCommandFromProtobuf(t *testing.T) {
 	}
 }
 
-// Техника: классы эквивалентности и граничные значения данных команды.
+// Техника: разбиение на классы эквивалентности и анализ граничных значений данных команды.
 func TestStartDeploymentRejectsInvalidCommandBeforeService(t *testing.T) {
 	validSpec := &inferencev1.DeploymentSpec{
 		ProviderType:        "HUGGING_FACE",
@@ -104,10 +104,12 @@ func TestStartDeploymentRejectsInvalidCommandBeforeService(t *testing.T) {
 			}
 		})
 	}
-	t.Run("nil request", func(t *testing.T) {
-		_, err := NewHandler(nil).StartDeployment(context.Background(), nil)
-		if status.Code(err) != codes.InvalidArgument {
-			t.Fatalf("expected InvalidArgument, got %v", err)
-		}
-	})
+}
+
+// Техника: разбиение на классы эквивалентности; случай отсутствующего запроса.
+func TestStartDeploymentRejectsNilRequest(t *testing.T) {
+	_, err := NewHandler(nil).StartDeployment(t.Context(), nil)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("expected InvalidArgument, got %v", err)
+	}
 }

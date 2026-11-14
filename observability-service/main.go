@@ -3,14 +3,74 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
+	"runtime"
+	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 type probe struct{ name, network, address string }
+
+type responseCounts struct {
+	mu    sync.Mutex
+	codes map[int]uint64
+}
+
+type countedResponse struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *countedResponse) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	if status >= 200 && w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *countedResponse) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (c *responseCounts) track(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/metrics" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		response := &countedResponse{ResponseWriter: w}
+		next.ServeHTTP(response, r)
+		status := response.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		c.mu.Lock()
+		c.codes[status]++
+		c.mu.Unlock()
+	})
+}
+
+func (c *responseCounts) write(w http.ResponseWriter) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, _ = fmt.Fprint(w, "# HELP observability_http_responses_total Number of HTTP responses by status code.\n# TYPE observability_http_responses_total counter\n")
+	for code, count := range c.codes {
+		_, _ = fmt.Fprintf(w, "observability_http_responses_total{code=\"%d\"} %d\n", code, count)
+	}
+}
 
 var probes = []probe{
 	{"nginx", "http", "http://nginx/health"},
@@ -20,8 +80,8 @@ var probes = []probe{
 	{"adminer", "http", "http://adminer:8080/"},
 	{"postgres", "tcp", "postgres:5432"},
 	{"loki", "tcp", "loki:3100"},
+	{"prometheus", "tcp", "prometheus:9090"},
 	{"tempo", "tcp", "tempo:3200"},
-	{"otel-collector", "tcp", "otel-collector:4318"},
 	{"alloy", "tcp", "alloy:12345"},
 	{"grafana", "tcp", "grafana:3000"},
 }
@@ -134,10 +194,37 @@ func readiness(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	mux := http.NewServeMux()
+	counts := &responseCounts{codes: make(map[int]uint64)}
+	dockerMetrics := newDockerMetrics("/var/run/docker.sock")
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		_, _ = fmt.Fprint(w, "# HELP observability_service_info Observability service is running.\n# TYPE observability_service_info gauge\nobservability_service_info 1\n")
+		counts.write(w)
+		dockerMetrics.write(r.Context(), w)
+		_, _ = fmt.Fprintf(w, "# HELP go_goroutines Number of goroutines.\n# TYPE go_goroutines gauge\ngo_goroutines %d\n", runtime.NumGoroutine())
+		var mem runtime.MemStats
+		runtime.ReadMemStats(&mem)
+		_, _ = fmt.Fprintf(w, "# HELP go_memstats_alloc_bytes Go heap allocated bytes.\n# TYPE go_memstats_alloc_bytes gauge\ngo_memstats_alloc_bytes %d\n", mem.Alloc)
+		var usage syscall.Rusage
+		if syscall.Getrusage(syscall.RUSAGE_SELF, &usage) == nil {
+			seconds := float64(usage.Utime.Sec+usage.Stime.Sec) + float64(usage.Utime.Usec+usage.Stime.Usec)/1e6
+			_, _ = fmt.Fprintf(w, "# HELP process_cpu_seconds_total Total user and system CPU time.\n# TYPE process_cpu_seconds_total counter\nprocess_cpu_seconds_total %g\n", seconds)
+		}
+		if data, err := os.ReadFile("/proc/self/statm"); err == nil {
+			fields := strings.Fields(string(data))
+			if len(fields) > 1 {
+				if pages, err := strconv.ParseUint(fields[1], 10, 64); err == nil {
+					_, _ = fmt.Fprintf(w, "# HELP process_resident_memory_bytes Resident memory size in bytes.\n# TYPE process_resident_memory_bytes gauge\nprocess_resident_memory_bytes %d\n", pages*uint64(os.Getpagesize()))
+				}
+			}
+		}
+	})
 	mux.HandleFunc("GET /healthz", report)
 	mux.HandleFunc("GET /ready", readiness)
-	server := &http.Server{Addr: ":8080", Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	if server.ListenAndServe() != nil {
+	server := &http.Server{Addr: ":8080", Handler: counts.track(mux), ReadHeaderTimeout: 5 * time.Second}
+	log.Printf("observability-service listening on %s", server.Addr)
+	if err := server.ListenAndServe(); err != nil {
+		log.Printf("observability-service stopped: %v", err)
 		os.Exit(1)
 	}
 }

@@ -29,6 +29,8 @@ func NewLogger(environment, level, serviceName, version string) (zerolog.Logger,
 		Level(parsedLevel).
 		With().
 		Timestamp().
+		Str("service_name", serviceName).
+		Str("container_name", os.Getenv("CONTAINER_NAME")).
 		Str("service.name", serviceName).
 		Str("service.version", version).
 		Str("deployment.environment", environment).

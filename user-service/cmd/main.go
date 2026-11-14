@@ -18,6 +18,9 @@ import (
 	"github.com/jur4ikoff/user-service/internal/infrastructure"
 	"github.com/jur4ikoff/user-service/internal/repository"
 	"github.com/jur4ikoff/user-service/internal/service"
+	"github.com/jur4ikoff/utils/httpmiddleware"
+	"github.com/jur4ikoff/utils/metrics"
+	"github.com/jur4ikoff/utils/telemetry"
 )
 
 func main() {
@@ -109,6 +112,8 @@ func run() error {
 	var ready atomic.Bool
 	ready.Store(true)
 	root := http.NewServeMux()
+	appMetrics := metrics.New()
+	root.Handle("GET /metrics", appMetrics.Handler())
 	root.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	root.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if !ready.Load() {
@@ -123,15 +128,19 @@ func run() error {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	root.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	root.Handle("/", appMetrics.InstrumentHTTP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost || r.Method == http.MethodPatch || r.Method == http.MethodPut {
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 		}
 		router.ServeHTTP(w, r)
-	}))
+	})))
+	var rootHandler http.Handler = root
+	if cfg.ReadOnly {
+		rootHandler = httpmiddleware.ReadOnly(rootHandler)
+	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           http.TimeoutHandler(root, cfg.RequestTimeout, "request timed out"),
+		Handler:           telemetry.HTTPHandler(api.LogRequests(logger, http.TimeoutHandler(rootHandler, cfg.RequestTimeout, "request timed out")), "user-service"),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       cfg.RequestTimeout,
 		WriteTimeout:      cfg.RequestTimeout,
@@ -146,6 +155,7 @@ func run() error {
 
 	select {
 	case <-ctx.Done():
+		logger.Info().Msg("user service shutting down")
 		ready.Store(false)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

@@ -7,10 +7,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jur4ikoff/inference-service/internal/config"
 	"github.com/jur4ikoff/inference-service/internal/domain"
-	"github.com/jur4ikoff/inference-service/internal/testutil"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/client"
+	"go.uber.org/mock/gomock"
 	"io"
 	"sync"
 	"testing"
@@ -21,7 +21,7 @@ func managerConfig() config.DeploymentManagerConfig {
 	return config.DeploymentManagerConfig{SyncInterval: time.Hour, OperationTimeout: time.Second, ReconnectInterval: time.Millisecond}
 }
 
-// Техника: переходы состояний контейнера.
+// Техника: тестирование переходов состояний контейнера.
 func TestReconcileActualContainerStates(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -29,18 +29,15 @@ func TestReconcileActualContainerStates(t *testing.T) {
 		state    *container.State
 		failure  error
 		want     domain.Status
-		wantErr  bool
 	}{
-		{"running", domain.StatusPending, &container.State{Running: true}, nil, domain.StatusStarted, false},
-		{"created", domain.StatusPending, &container.State{Status: container.StateCreated}, nil, domain.StatusPending, false},
-		{"exited", domain.StatusStarted, &container.State{Status: container.StateExited}, nil, domain.StatusStopped, false},
-		{"restarting", domain.StatusStarted, &container.State{Running: true, Restarting: true}, nil, domain.StatusStopping, false},
-		{"removing", domain.StatusStarted, &container.State{Status: container.StateRemoving}, nil, domain.StatusStopping, false},
-		{"stop in progress", domain.StatusStopping, &container.State{Running: true}, nil, domain.StatusStopping, false},
-		{"ready model", domain.StatusRunning, &container.State{Running: true}, nil, domain.StatusRunning, false},
-		{"removed", domain.StatusStarted, nil, errdefs.ErrNotFound, domain.StatusStopped, false},
-		{"Docker unavailable", domain.StatusStarted, nil, errors.New("Docker unavailable"), domain.StatusStarted, true},
-		{"missing state", domain.StatusStarted, nil, nil, domain.StatusStarted, true},
+		{"running", domain.StatusPending, &container.State{Running: true}, nil, domain.StatusStarted},
+		{"created", domain.StatusPending, &container.State{Status: container.StateCreated}, nil, domain.StatusPending},
+		{"exited", domain.StatusStarted, &container.State{Status: container.StateExited}, nil, domain.StatusStopped},
+		{"restarting", domain.StatusStarted, &container.State{Running: true, Restarting: true}, nil, domain.StatusStopping},
+		{"removing", domain.StatusStarted, &container.State{Status: container.StateRemoving}, nil, domain.StatusStopping},
+		{"stop in progress", domain.StatusStopping, &container.State{Running: true}, nil, domain.StatusStopping},
+		{"ready model", domain.StatusRunning, &container.State{Running: true}, nil, domain.StatusRunning},
+		{"removed", domain.StatusStarted, nil, errdefs.ErrNotFound, domain.StatusStopped},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			repo := newMemoryRepository(test.previous)
@@ -50,14 +47,45 @@ func TestReconcileActualContainerStates(t *testing.T) {
 				t.Fatal(err)
 			}
 			err = m.Reconcile(t.Context())
-			if (err != nil) != test.wantErr || repo.current().Status != test.want {
-				t.Fatalf("status=%s error=%v, want %s (error=%v)", repo.current().Status, err, test.want, test.wantErr)
+			if err != nil || repo.current().Status != test.want {
+				t.Fatalf("status=%s error=%v, want %s", repo.current().Status, err, test.want)
 			}
 		})
 	}
 }
 
-// Техника: переходы состояний и устаревшие события.
+// Техника: разбиение на классы эквивалентности; случай ошибки Docker при сверке состояния.
+func TestReconcileReportsDockerError(t *testing.T) {
+	repo := newMemoryRepository(domain.StatusStarted)
+	failure := errors.New("Docker unavailable")
+	manager, err := NewDeploymentManager(repo, &memoryRuntime{failure: failure}, nil, managerConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(t.Context()); !errors.Is(err, failure) {
+		t.Fatalf("err=%v", err)
+	}
+	if repo.current().Status != domain.StatusStarted {
+		t.Fatal("status changed after Docker error")
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай ответа Docker без состояния контейнера.
+func TestReconcileRejectsMissingContainerState(t *testing.T) {
+	repo := newMemoryRepository(domain.StatusStarted)
+	manager, err := NewDeploymentManager(repo, &memoryRuntime{}, nil, managerConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(t.Context()); err == nil {
+		t.Fatal("missing state accepted")
+	}
+	if repo.current().Status != domain.StatusStarted {
+		t.Fatal("status changed after missing state")
+	}
+}
+
+// Техника: тестирование переходов состояний с учётом устаревших событий.
 func TestStoppingSignalsAndStaleEvents(t *testing.T) {
 	now := time.Now().UTC()
 	for _, test := range []struct {
@@ -89,7 +117,7 @@ func TestStoppingSignalsAndStaleEvents(t *testing.T) {
 	}
 }
 
-// Техника: переходы состояний при задержанном событии.
+// Техника: тестирование переходов состояний при задержанном событии.
 func TestLateStopEventDoesNotOverwriteRestart(t *testing.T) {
 	repo := newMemoryRepository(domain.StatusStopped)
 	runtime := &memoryRuntime{state: &container.State{Running: true}}
@@ -102,7 +130,7 @@ func TestLateStopEventDoesNotOverwriteRestart(t *testing.T) {
 	}
 }
 
-// Техника: класс отсутствующего deployment.
+// Техника: разбиение на классы эквивалентности; случай отсутствующего deployment.
 func TestUnknownDeploymentIsIgnored(t *testing.T) {
 	repo := newMemoryRepository(domain.StatusPending)
 	repo.getErr = domain.ErrDeploymentNotFound
@@ -116,8 +144,8 @@ func TestUnknownDeploymentIsIgnored(t *testing.T) {
 	}
 }
 
-// Техника: переходы состояний соединения и отмена.
-func TestRunHandlesLifecycleReconnectsAndStops(t *testing.T) {
+// Техника: тестирование переходов состояний по последовательности событий контейнера.
+func TestRunUpdatesDeploymentStatusesFromContainerEvents(t *testing.T) {
 	repo := newMemoryRepository(domain.StatusPending)
 	inspected := make(chan struct{}, 8)
 	runtime := &memoryRuntime{state: &container.State{Status: container.StateCreated}, inspected: inspected}
@@ -156,10 +184,46 @@ func TestRunHandlesLifecycleReconnectsAndStops(t *testing.T) {
 	if got := receive(t, repo.updates); got != domain.StatusStopped {
 		t.Fatalf("got %s, want STOPPED", got)
 	}
+	cancel()
+	if err := receive(t, done); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Техника: тестирование переходов состояний; переход подключения после разрыва потока событий.
+func TestRunReconnectsFromLastEvent(t *testing.T) {
+	repo := newMemoryRepository(domain.StatusPending)
+	inspected := make(chan struct{}, 2)
+	runtime := &memoryRuntime{state: &container.State{Status: container.StateCreated}, inspected: inspected}
+	messages := make(chan events.Message)
+	streamErrors := make(chan error)
+	connected := make(chan string, 4)
+	runtime.watch = func(_ context.Context, since string) client.EventsResult {
+		connected <- since
+		return client.EventsResult{Messages: messages, Err: streamErrors}
+	}
+	cfg := managerConfig()
+	cfg.OperationTimeout = time.Hour
+	manager, err := NewDeploymentManager(repo, runtime, nil, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- manager.Run(ctx) }()
+	receive(t, connected)
+	receive(t, inspected)
+	event := containerEvent(events.ActionStart)
+	event.TimeNano = time.Now().Add(time.Second).UnixNano()
+	runtime.setState(&container.State{Running: true})
+	send(t, messages, event)
+	if got := receive(t, repo.updates); got != domain.StatusStarted {
+		t.Fatalf("status=%s", got)
+	}
 	send[error](t, streamErrors, io.EOF)
-	cursor := receive(t, connected)
-	if cursor != eventTime(start).Format(time.RFC3339Nano) {
-		t.Fatalf("reconnect lost its event cursor: %s", cursor)
+	if cursor := receive(t, connected); cursor != eventTime(event).Format(time.RFC3339Nano) {
+		t.Fatalf("reconnect cursor=%s", cursor)
 	}
 	cancel()
 	if err := receive(t, done); err != nil {
@@ -167,7 +231,7 @@ func TestRunHandlesLifecycleReconnectsAndStops(t *testing.T) {
 	}
 }
 
-// Техника: класс блокированного подключения и отмена.
+// Техника: разбиение на классы эквивалентности; случай блокированного подключения при отмене.
 func TestBlockedSubscriptionIsCanceled(t *testing.T) {
 	repo := newMemoryRepository(domain.StatusPending)
 	watchStarted := make(chan struct{})
@@ -293,7 +357,7 @@ func (r *memoryRuntime) ContainerEndpoint(client.ContainerInspectResult) (string
 	return "http://model:8080", nil
 }
 
-// Техника: переходы состояний при отмене.
+// Техника: тестирование переходов состояний при отмене.
 func TestManagerCancellationKeepsRunningDeployment(t *testing.T) {
 	repo := newMemoryRepository(domain.StatusStarted)
 	inspected := make(chan struct{}, 1)
@@ -318,28 +382,37 @@ func TestManagerCancellationKeepsRunningDeployment(t *testing.T) {
 	}
 }
 
-// Техника: классы эквивалентности результата чтения состояний.
-func TestManagerInit(t *testing.T) {
-	failure := errors.New("database unavailable")
-	for _, tc := range []struct {
-		name    string
-		repoErr error
-	}{{"success", nil}, {"repository failure", failure}} {
-		t.Run(tc.name, func(t *testing.T) {
-			calls := 0
-			repo := &testutil.MockManagerRepository{ListDeploymentStatesFunc: func(context.Context) ([]domain.DeploymentState, error) { calls++; return nil, tc.repoErr }}
-			svc, err := NewDeploymentManager(repo, &testutil.MockManagerRuntime{}, nil, config.DeploymentManagerConfig{SyncInterval: time.Second, OperationTimeout: time.Second, ReconnectInterval: time.Second})
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = svc.Init(context.Background())
-			if !errors.Is(err, tc.repoErr) || calls != 1 {
-				t.Fatalf("err=%v calls=%d", err, calls)
-			}
-		})
+// Техника: разбиение на классы эквивалентности; случай успешного чтения состояний.
+func TestManagerInitPrunesRoutes(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	repo := NewMockManagerRepository(ctrl)
+	routes := NewMockRouteRegistry(ctrl)
+	repo.EXPECT().ListDeploymentStates(gomock.Any()).Return(nil, nil)
+	routes.EXPECT().Prune([]domain.DeploymentState(nil))
+	svc, err := NewDeploymentManager(repo, NewMockManagerRuntime(ctrl), routes, managerConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 }
 
-var _ DeploymentRepository = (*testutil.MockManagerRepository)(nil)
-var _ Runtime = (*testutil.MockManagerRuntime)(nil)
-var _ RouteRegistry = (*testutil.MockRouteRegistry)(nil)
+// Техника: разбиение на классы эквивалентности; случай ошибки зависимости при чтении состояний.
+func TestManagerInitReportsRepositoryError(t *testing.T) {
+	failure := errors.New("database unavailable")
+	ctrl := gomock.NewController(t)
+	repo := NewMockManagerRepository(ctrl)
+	repo.EXPECT().ListDeploymentStates(gomock.Any()).Return(nil, failure)
+	svc, err := NewDeploymentManager(repo, NewMockManagerRuntime(ctrl), NewMockRouteRegistry(ctrl), managerConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Init(t.Context()); !errors.Is(err, failure) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+var _ DeploymentRepository = (*MockManagerRepository)(nil)
+var _ Runtime = (*MockManagerRuntime)(nil)
+var _ RouteRegistry = (*MockRouteRegistry)(nil)

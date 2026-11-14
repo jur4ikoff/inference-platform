@@ -2,13 +2,16 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jur4ikoff/model-service/internal/auth"
 	"github.com/jur4ikoff/model-service/internal/domain"
+	"github.com/jur4ikoff/model-service/internal/idempotency"
 	"github.com/jur4ikoff/model-service/internal/service"
 )
 
@@ -26,8 +29,18 @@ type modelUseCases interface {
 }
 
 type Handler struct {
-	models modelUseCases
-	auth   auth.Verifier
+	models      modelUseCases
+	auth        auth.Verifier
+	idempotency idempotencyStore
+}
+
+type idempotencyStore interface {
+	Execute(context.Context, string, string, string, string, func() ([]byte, int, error)) ([]byte, error)
+}
+
+func (h *Handler) WithIdempotencyStore(store idempotencyStore) *Handler {
+	h.idempotency = store
+	return h
 }
 
 func NewHandler(models modelUseCases, verifiers ...auth.Verifier) *Handler {
@@ -167,7 +180,63 @@ type deleteDeploymentOutput struct {
 	Status int
 }
 
-func (h *Handler) createDeployment(ctx context.Context, input *modelInput) (*createDeploymentOutput, error) {
+func (h *Handler) createDeployment(ctx context.Context, input *createDeploymentInput) (*createDeploymentOutput, error) {
+	if input.IdempotencyKey == "" {
+		return nil, huma.Error400BadRequest("Idempotency-Key is required")
+	}
+	if len(input.IdempotencyKey) > 128 || strings.TrimSpace(input.IdempotencyKey) != input.IdempotencyKey {
+		return nil, huma.Error400BadRequest("invalid Idempotency-Key")
+	}
+	for _, r := range input.IdempotencyKey {
+		if r < 33 || r > 126 {
+			return nil, huma.Error400BadRequest("invalid Idempotency-Key")
+		}
+	}
+	principal, ok := principalFromContext(ctx)
+	if !ok || principal.Subject == "" {
+		return nil, huma.Error401Unauthorized("missing or invalid bearer token")
+	}
+	if h.idempotency == nil {
+		return nil, huma.Error503ServiceUnavailable("idempotency storage unavailable")
+	}
+	body, err := h.idempotency.Execute(ctx, principal.Subject, input.IdempotencyKey, input.Project, strings.ToLower(input.ModelID), func() ([]byte, int, error) {
+		output, err := h.createDeploymentOnce(ctx, input)
+		if err != nil {
+			status := http.StatusInternalServerError
+			var statusErr huma.StatusError
+			if errors.As(err, &statusErr) {
+				status = statusErr.GetStatus()
+			}
+			return nil, status, err
+		}
+		data, err := json.Marshal(output)
+		return data, http.StatusInternalServerError, err
+	})
+	if errors.Is(err, idempotency.ErrConflict) {
+		return nil, huma.Error409Conflict("Idempotency-Key was used for a different request")
+	}
+	if errors.Is(err, idempotency.ErrPending) {
+		return nil, huma.Error503ServiceUnavailable("previous deployment creation has an uncertain outcome")
+	}
+	var failed idempotency.PreviousFailure
+	if errors.As(err, &failed) {
+		return nil, huma.NewError(failed.Status, "previous deployment creation failed")
+	}
+	if err != nil {
+		var statusErr huma.StatusError
+		if errors.As(err, &statusErr) {
+			return nil, err
+		}
+		return nil, huma.Error503ServiceUnavailable("idempotency storage unavailable")
+	}
+	var output createDeploymentOutput
+	if err := json.Unmarshal(body, &output); err != nil {
+		return nil, huma.Error500InternalServerError("invalid stored deployment result")
+	}
+	return &output, nil
+}
+
+func (h *Handler) createDeploymentOnce(ctx context.Context, input *createDeploymentInput) (*createDeploymentOutput, error) {
 	deployment, err := h.models.CreateDeployment(ctx, input.Project, input.ModelID)
 	if err != nil {
 		return nil, mapServiceError(err)

@@ -3,18 +3,19 @@ package runtime
 import (
 	"context"
 	"errors"
-	"github.com/jur4ikoff/inference-service/internal/config"
-	"github.com/jur4ikoff/inference-service/internal/domain"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jur4ikoff/inference-service/internal/config"
+	"github.com/jur4ikoff/inference-service/internal/domain"
+
 	dockerclient "github.com/moby/moby/client"
 )
 
-// Техника: классы эквивалентности успешного и ошибочного ответа Docker.
+// Техника: разбиение на классы эквивалентности успешного и ошибочного ответа Docker.
 func TestPullImageClosesResponseStream(t *testing.T) {
 	for _, test := range []struct {
 		name, response string
@@ -73,44 +74,7 @@ func (b *trackedBody) Close() error {
 	return nil
 }
 
-// Техника: классы эквивалентности ответов Docker API.
-func TestContainerOperations(t *testing.T) {
-	failure := errors.New("docker unavailable")
-	for _, tc := range []struct {
-		name     string
-		call     func(*RuntimeService) error
-		response string
-	}{
-		{"create", func(r *RuntimeService) error {
-			_, e := r.CreateContainer(context.Background(), "image", "model", domain.DeploymentSpec{ProviderType: domain.ModelProviderTypeHuggingFace, ProviderHuggingFace: &domain.HuggingFaceProvider{Repo: "org/model"}})
-			return e
-		}, `{"Id":"container-1","Warnings":[]}`},
-		{"get", func(r *RuntimeService) error { _, e := r.GetContainer(context.Background(), "id"); return e }, `{"Id":"id","State":{"Status":"running"}}`},
-		{"start", func(r *RuntimeService) error { return r.StartContainer(context.Background(), "id") }, `{}`}, {"stop", func(r *RuntimeService) error { return r.StopContainer(context.Background(), "id") }, `{}`}, {"remove", func(r *RuntimeService) error { return r.RemoveContainer(context.Background(), "id") }, `{}`}, {"image", func(r *RuntimeService) error { return r.EnsureImage(context.Background(), "image") }, `{"Id":"image"}`},
-	} {
-		for _, fail := range []bool{false, true} {
-			t.Run(tc.name+map[bool]string{true: "/failure", false: "/success"}[fail], func(t *testing.T) {
-				transport := dockerTransport(func(req *http.Request) (*http.Response, error) {
-					if fail {
-						return nil, failure
-					}
-					return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(tc.response)), Request: req}, nil
-				})
-				client, err := dockerclient.New(dockerclient.WithHost("tcp://docker.test:2375"), dockerclient.WithAPIVersion("1.56"), dockerclient.WithHTTPClient(&http.Client{Transport: transport}))
-				if err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { _ = client.Close() })
-				err = tc.call(&RuntimeService{client: client})
-				if fail && err == nil || !fail && err != nil {
-					t.Fatalf("err=%v", err)
-				}
-			})
-		}
-	}
-}
-
-// Техника: классы эквивалентности имени контейнера.
+// Техника: разбиение на классы эквивалентности имени контейнера.
 func TestEndpointWithDockerNetwork(t *testing.T) {
 	for _, tc := range []struct {
 		name, want string
@@ -127,7 +91,7 @@ func TestEndpointWithDockerNetwork(t *testing.T) {
 	}
 }
 
-// Техника: класс неподдерживаемого типа провайдера.
+// Техника: разбиение на классы эквивалентности; случай неподдерживаемого типа провайдера.
 func TestCreateContainerRejectsProvider(t *testing.T) {
 	_, err := (&RuntimeService{}).CreateContainer(context.Background(), "image", "model", domain.DeploymentSpec{ProviderType: "unsupported"})
 	if err == nil {
@@ -135,51 +99,229 @@ func TestCreateContainerRejectsProvider(t *testing.T) {
 	}
 }
 
-// Техника: классы эквивалентности подключения потока событий.
-func TestWatchContainerEvents(t *testing.T) {
-	for _, fail := range []bool{true, false} {
-		t.Run(map[bool]string{true: "failure", false: "success"}[fail], func(t *testing.T) {
-			transport := dockerTransport(func(req *http.Request) (*http.Response, error) {
-				if fail {
-					return nil, errors.New("unavailable")
-				}
-				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
-			})
-			client, err := dockerclient.New(dockerclient.WithHost("tcp://docker.test:2375"), dockerclient.WithAPIVersion("1.56"), dockerclient.WithHTTPClient(&http.Client{Transport: transport}))
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = client.Close() })
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-			defer cancel()
-			stream := (&RuntimeService{client: client}).WatchContainerEvents(ctx, "")
-			select {
-			case err := <-stream.Err:
-				if fail && err == nil || !fail && !errors.Is(err, io.EOF) {
-					t.Fatalf("err=%v", err)
-				}
-			case <-ctx.Done():
-				t.Fatal("timed out")
-			}
-		})
+func watchTestRuntime(t *testing.T, transport dockerTransport) *RuntimeService {
+	t.Helper()
+	client, err := dockerclient.New(dockerclient.WithHost("tcp://docker.test:2375"), dockerclient.WithAPIVersion("1.56"), dockerclient.WithHTTPClient(&http.Client{Transport: transport}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	return &RuntimeService{client: client}
+}
+
+// Техника: разбиение на классы эквивалентности; случай успешно открытого потока событий.
+func TestWatchContainerEventsReadsToEOF(t *testing.T) {
+	runtime := watchTestRuntime(t, dockerTransport(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
+	}))
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	stream := runtime.WatchContainerEvents(ctx, "")
+	select {
+	case err := <-stream.Err:
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("err=%v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out")
 	}
 }
 
-// Техника: классы эквивалентности открытого и закрытого клиента.
-func TestCloseRuntime(t *testing.T) {
-	for _, closed := range []bool{true, false} {
-		t.Run(map[bool]string{true: "closed", false: "open"}[closed], func(t *testing.T) {
-			client, err := dockerclient.New(dockerclient.WithHost("tcp://docker.test:2375"), dockerclient.WithAPIVersion("1.56"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if closed {
-				_ = client.Close()
-			}
-			err = (&RuntimeService{client: client}).Close()
-			if err != nil {
-				t.Fatal(err)
-			}
-		})
+// Техника: разбиение на классы эквивалентности; случай ошибки подключения к Docker.
+func TestWatchContainerEventsReportsConnectionError(t *testing.T) {
+	failure := errors.New("unavailable")
+	runtime := watchTestRuntime(t, dockerTransport(func(*http.Request) (*http.Response, error) { return nil, failure }))
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	stream := runtime.WatchContainerEvents(ctx, "")
+	select {
+	case err := <-stream.Err:
+		if !errors.Is(err, failure) {
+			t.Fatalf("err=%v", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("timed out")
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай открытого клиента.
+func TestCloseRuntimeClosesOpenClient(t *testing.T) {
+	client, err := dockerclient.New(dockerclient.WithHost("tcp://docker.test:2375"), dockerclient.WithAPIVersion("1.56"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (&RuntimeService{client: client}).Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай уже закрытого клиента.
+func TestCloseRuntimeAllowsRepeatedClose(t *testing.T) {
+	client, err := dockerclient.New(dockerclient.WithHost("tcp://docker.test:2375"), dockerclient.WithAPIVersion("1.56"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&RuntimeService{client: client}).Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runtimeWithDockerResponse(t *testing.T, response string, transportErr error) *RuntimeService {
+	t.Helper()
+	transport := dockerTransport(func(req *http.Request) (*http.Response, error) {
+		if transportErr != nil {
+			return nil, transportErr
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(response)),
+			Request:    req,
+		}, nil
+	})
+	client, err := dockerclient.New(
+		dockerclient.WithHost("tcp://docker.test:2375"),
+		dockerclient.WithAPIVersion("1.56"),
+		dockerclient.WithHTTPClient(&http.Client{Transport: transport}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	return &RuntimeService{client: client}
+}
+
+func validContainerSpec() domain.DeploymentSpec {
+	return domain.DeploymentSpec{
+		ProviderType:        domain.ModelProviderTypeHuggingFace,
+		ProviderHuggingFace: &domain.HuggingFaceProvider{Repo: "org/model"},
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай успешного ответа Docker при создании контейнера.
+func TestCreateContainerReturnsDockerID(t *testing.T) {
+	runtime := runtimeWithDockerResponse(t, "{\"Id\":\"container-1\",\"Warnings\":[]}", nil)
+	id, err := runtime.CreateContainer(t.Context(), "image", "model", validContainerSpec())
+	if err != nil || id != "container-1" {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай ошибки Docker при создании контейнера.
+func TestCreateContainerReportsDockerError(t *testing.T) {
+	failure := errors.New("docker unavailable")
+	runtime := runtimeWithDockerResponse(t, "", failure)
+	id, err := runtime.CreateContainer(t.Context(), "image", "model", validContainerSpec())
+	if id != "" || !errors.Is(err, failure) {
+		t.Fatalf("id=%q err=%v", id, err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай найденного контейнера.
+func TestGetContainerReturnsInspection(t *testing.T) {
+	runtime := runtimeWithDockerResponse(t, "{\"Id\":\"container-1\",\"State\":{\"Status\":\"running\"}}", nil)
+	info, err := runtime.GetContainer(t.Context(), "container-1")
+	if err != nil || info.Container.ID != "container-1" || info.Container.State == nil || info.Container.State.Status != "running" {
+		t.Fatalf("info=%+v err=%v", info, err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай ошибки Docker при чтении контейнера.
+func TestGetContainerReportsDockerError(t *testing.T) {
+	failure := errors.New("docker unavailable")
+	runtime := runtimeWithDockerResponse(t, "", failure)
+	_, err := runtime.GetContainer(t.Context(), "container-1")
+	if !errors.Is(err, failure) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай непустого списка контейнеров.
+func TestListServiceContainersReturnsItems(t *testing.T) {
+	runtime := runtimeWithDockerResponse(t, "[{\"Id\":\"container-1\"}]", nil)
+	list, err := runtime.ListServiceContainers(t.Context(), "demo")
+	if err != nil || len(list.Items) != 1 || list.Items[0].ID != "container-1" {
+		t.Fatalf("items=%+v err=%v", list.Items, err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай ошибки Docker при чтении списка.
+func TestListServiceContainersReportsDockerError(t *testing.T) {
+	failure := errors.New("docker unavailable")
+	runtime := runtimeWithDockerResponse(t, "", failure)
+	_, err := runtime.ListServiceContainers(t.Context(), "demo")
+	if !errors.Is(err, failure) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай успешного запуска контейнера.
+func TestStartContainerSucceeds(t *testing.T) {
+	runtime := runtimeWithDockerResponse(t, "{}", nil)
+	if err := runtime.StartContainer(t.Context(), "container-1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай ошибки Docker при запуске контейнера.
+func TestStartContainerReportsDockerError(t *testing.T) {
+	failure := errors.New("docker unavailable")
+	runtime := runtimeWithDockerResponse(t, "", failure)
+	if err := runtime.StartContainer(t.Context(), "container-1"); !errors.Is(err, failure) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай успешной остановки контейнера.
+func TestStopContainerSucceeds(t *testing.T) {
+	runtime := runtimeWithDockerResponse(t, "{}", nil)
+	if err := runtime.StopContainer(t.Context(), "container-1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай ошибки Docker при остановке контейнера.
+func TestStopContainerReportsDockerError(t *testing.T) {
+	failure := errors.New("docker unavailable")
+	runtime := runtimeWithDockerResponse(t, "", failure)
+	if err := runtime.StopContainer(t.Context(), "container-1"); !errors.Is(err, failure) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай успешного удаления контейнера.
+func TestRemoveContainerSucceeds(t *testing.T) {
+	runtime := runtimeWithDockerResponse(t, "{}", nil)
+	if err := runtime.RemoveContainer(t.Context(), "container-1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай ошибки Docker при удалении контейнера.
+func TestRemoveContainerReportsDockerError(t *testing.T) {
+	failure := errors.New("docker unavailable")
+	runtime := runtimeWithDockerResponse(t, "", failure)
+	if err := runtime.RemoveContainer(t.Context(), "container-1"); !errors.Is(err, failure) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай уже доступного образа.
+func TestEnsureImageUsesLocalImage(t *testing.T) {
+	runtime := runtimeWithDockerResponse(t, "{\"Id\":\"image\"}", nil)
+	if err := runtime.EnsureImage(t.Context(), "image"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай ошибки Docker при проверке образа.
+func TestEnsureImageReportsDockerError(t *testing.T) {
+	failure := errors.New("docker unavailable")
+	runtime := runtimeWithDockerResponse(t, "", failure)
+	if err := runtime.EnsureImage(t.Context(), "image"); !errors.Is(err, failure) {
+		t.Fatalf("err=%v", err)
 	}
 }

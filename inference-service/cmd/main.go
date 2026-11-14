@@ -11,14 +11,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jur4ikoff/inference-service/internal/api"
 	"github.com/jur4ikoff/inference-service/internal/config"
 	"github.com/jur4ikoff/inference-service/internal/manager"
+	deploymentmetrics "github.com/jur4ikoff/inference-service/internal/metrics"
 	"github.com/jur4ikoff/inference-service/internal/repository"
 	"github.com/jur4ikoff/inference-service/internal/runtime"
 	"github.com/jur4ikoff/inference-service/internal/service"
 	"github.com/jur4ikoff/utils/logging"
+	"github.com/jur4ikoff/utils/metrics"
 	"github.com/jur4ikoff/utils/postgres"
+	"github.com/jur4ikoff/utils/telemetry"
 )
 
 const shutdownTimeout = 15 * time.Second
@@ -53,9 +57,21 @@ func run() error {
 		return fmt.Errorf("create logger: %w", err)
 	}
 	ctx = logger.WithContext(ctx)
+	shutdownTracing, err := telemetry.Init(ctx, cfg.ServiceName, cfg.Version, cfg.Environment)
+	if err != nil {
+		return fmt.Errorf("initialize tracing: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(shutdownCtx); err != nil {
+			logger.Error().Err(err).Msg("shutdown tracing")
+		}
+	}()
 
 	var repo service.DeploymentRepository
 	var monitorRepo manager.DeploymentRepository
+	var metricsPool *pgxpool.Pool
 	if cfg.DatabaseURL != "" {
 		startupCtx, cancelStartup := context.WithTimeout(ctx, cfg.DatabaseConnectTimeout)
 		pool, err := postgres.NewPool(startupCtx, cfg.DatabaseURL, cfg.DatabaseMaxConns, cfg.DatabaseMinConns)
@@ -74,6 +90,7 @@ func run() error {
 			return fmt.Errorf("check PostgreSQL connection: %w", err)
 		}
 		defer pool.Close()
+		metricsPool = pool
 		logger.Info().Msg("PostgreSQL connection established")
 	}
 
@@ -88,14 +105,33 @@ func run() error {
 	}()
 
 	deploymentService := service.NewDeploymentService(repo, cfg.Service, runtimeClient)
-	server := api.NewServer(deploymentService, cfg)
+	appMetrics := metrics.New()
+	project := os.Getenv("PLATFORM_COMPOSE_PROJECT")
+	if project == "" {
+		project = "inference-platform"
+	}
+	projects := os.Getenv("CONTAINER_METRICS_PROJECTS")
+	if projects == "" {
+		projects = project + ",stress-test,inference-platform-tests"
+	}
+	if err := appMetrics.Register(deploymentmetrics.NewContainerLimitsCollector(runtimeClient, projects)); err != nil {
+		return fmt.Errorf("register container limit metrics: %w", err)
+	}
+	if metricsPool != nil {
+		if err := appMetrics.Register(deploymentmetrics.NewDeploymentsCollector(metricsPool, runtimeClient)); err != nil {
+			return fmt.Errorf("register deployment metrics: %w", err)
+		}
+	}
+	server := api.NewServer(deploymentService, cfg, appMetrics, logger)
 
-	if err = deploymentService.Init(ctx); err != nil {
-		return fmt.Errorf("init deployment service: %w", err)
+	if !cfg.ReadOnly {
+		if err = deploymentService.Init(ctx); err != nil {
+			return fmt.Errorf("init deployment service: %w", err)
+		}
 	}
 
 	var deploymentManager *manager.DeploymentManager
-	if monitorRepo != nil {
+	if monitorRepo != nil && !cfg.ReadOnly {
 		deploymentManager, err = manager.NewDeploymentManager(monitorRepo, runtimeClient, routes, cfg.DeploymentManager)
 		if err != nil {
 			return fmt.Errorf("create deployment manager: %w", err)
@@ -112,10 +148,15 @@ func run() error {
 	defer listener.Close()
 	logger.Info().Str("address", listener.Addr().String()).Msg("GRPC server starting")
 	httpMux := http.NewServeMux()
+	httpMux.Handle("GET /metrics", appMetrics.Handler())
 	httpMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	httpMux.Handle("/", routes)
+	if !cfg.ReadOnly {
+		httpMux.Handle("/", appMetrics.InstrumentHTTP(routes))
+	}
 	httpServer := &http.Server{
-		Addr: cfg.HTTPAddr, Handler: httpMux, ReadHeaderTimeout: 5 * time.Second,
+		Addr: cfg.HTTPAddr, Handler: telemetry.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			httpMux.ServeHTTP(w, r.WithContext(telemetry.WithLogger(r.Context(), logger)))
+		}), "inference-proxy"), ReadHeaderTimeout: 5 * time.Second,
 		BaseContext: func(net.Listener) context.Context { return context.WithoutCancel(ctx) },
 	}
 	httpListener, err := net.Listen("tcp", cfg.HTTPAddr)

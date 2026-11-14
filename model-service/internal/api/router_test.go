@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jur4ikoff/model-service/internal/auth"
 	"github.com/jur4ikoff/model-service/internal/domain"
 	"github.com/jur4ikoff/model-service/internal/service"
 )
@@ -85,7 +86,7 @@ func TestDocumentation(t *testing.T) {
 			t.Errorf("incomplete documentation for %s %s: %+v", test.method, test.path, op)
 		}
 		if strings.Contains(test.path, "{model_id}") {
-			if len(op.Parameters) != 2 || op.Parameters[0].Name != "project" || op.Parameters[0].In != "path" || op.Parameters[1].Name != "model_id" || op.Parameters[1].In != "path" {
+			if len(op.Parameters) < 2 || op.Parameters[0].Name != "project" || op.Parameters[0].In != "path" || op.Parameters[1].Name != "model_id" || op.Parameters[1].In != "path" {
 				t.Errorf("missing project and model ID parameters for %s %s: %+v", test.method, test.path, op.Parameters)
 			}
 		}
@@ -168,6 +169,11 @@ func TestModelRoutesRejectNamesAsIdentifiers(t *testing.T) {
 	apiRequest(t, router, http.MethodGet, "/api/v1/projects/project-1/models/by-id/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", "", http.StatusNotFound)
 }
 
+func TestCreateDeploymentRequiresIdempotencyKey(t *testing.T) {
+	router := NewHandler(nil).Router()
+	apiRequest(t, router, http.MethodPost, "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1/deployment", "", http.StatusUnprocessableEntity)
+}
+
 // Техника: переходы состояний модели и deployment.
 func TestModelRoutes(t *testing.T) {
 	model := domain.Model{
@@ -207,7 +213,15 @@ func TestModelRoutes(t *testing.T) {
 
 	fake.deployment = domain.Deployment{ID: "0197eb5a-37c6-7e48-8cd6-0c19edcd72f2", ModelID: model.ID, Project: model.Project, Name: model.Name, Status: "starting"}
 	fake.deploymentAccepted = true
-	response = apiRequest(t, router, http.MethodPost, "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1/deployment", "", http.StatusAccepted)
+	createRouter := NewHandler(fake).WithIdempotencyStore(passthroughIdempotency{}).Router()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1/deployment", nil)
+	request.Header.Set("Idempotency-Key", "test-key")
+	request = request.WithContext(context.WithValue(request.Context(), principalContextKey{}, auth.Principal{Subject: "user-1"}))
+	response = httptest.NewRecorder()
+	createRouter.ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("create deployment: status=%d body=%s", response.Code, response.Body)
+	}
 	if response.Header().Get("Location") != "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1/deployment" {
 		t.Fatalf("unexpected deployment location: %q", response.Header().Get("Location"))
 	}
@@ -328,6 +342,13 @@ type modelStub struct {
 	updated            service.UpdateModelInput
 	deployment         domain.Deployment
 	deploymentAccepted bool
+}
+
+type passthroughIdempotency struct{}
+
+func (passthroughIdempotency) Execute(_ context.Context, _, _, _, _ string, run func() ([]byte, int, error)) ([]byte, error) {
+	data, _, err := run()
+	return data, err
 }
 
 // Техника: классы эквивалентности идентификаторов модели.

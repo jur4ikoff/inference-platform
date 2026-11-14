@@ -7,6 +7,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jur4ikoff/user-service/internal/service"
+	"github.com/rs/zerolog/log"
 )
 
 type principalContextKey struct{}
@@ -32,7 +33,17 @@ func AuthenticationMiddleware(api huma.API, auth tokenVerifier) AuthMiddleware {
 			return
 		}
 
-		next(huma.WithContext(ctx, service.WithPrincipal(context.WithValue(ctx.Context(), principalContextKey{}, principal), principal)))
+		requestCtx := service.WithPrincipal(context.WithValue(ctx.Context(), principalContextKey{}, principal), principal)
+		project := ctx.Param("project_name")
+		if project == "" && principal.Project != nil && ctx.Operation().OperationID != "createProject" {
+			project = principal.Project.Name
+		}
+		fields := log.Ctx(requestCtx).With().Str("username", principal.Username)
+		if project != "" {
+			fields = fields.Str("project", project)
+		}
+		logger := fields.Logger()
+		next(huma.WithContext(ctx, logger.WithContext(requestCtx)))
 	}
 }
 

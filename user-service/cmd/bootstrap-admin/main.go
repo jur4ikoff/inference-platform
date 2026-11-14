@@ -14,6 +14,7 @@ import (
 	"github.com/jur4ikoff/user-service/internal/infrastructure"
 	"github.com/jur4ikoff/user-service/internal/repository"
 	"github.com/jur4ikoff/user-service/internal/service"
+	"github.com/rs/zerolog/log"
 )
 
 func main() {
@@ -44,6 +45,7 @@ func run() error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	ctx = log.Logger.WithContext(ctx)
 	pool, err := infrastructure.NewPool(ctx, cfg.DatabaseURL, cfg.DatabaseMaxConns, cfg.DatabaseMinConns)
 	if err != nil {
 		return err

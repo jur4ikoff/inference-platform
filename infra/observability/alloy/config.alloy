@@ -4,20 +4,29 @@ discovery.docker "containers" {
 }
 
 discovery.relabel "container_logs" {
-  targets = []
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "(user-service|model-service|inference-service)(-ro-[12]|-mirror)?|nginx"
+    action        = "keep"
+  }
 
   rule {
     source_labels = ["__meta_docker_container_name"]
     regex         = "/(.*)"
     target_label  = "container"
   }
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
 }
 
 loki.source.docker "containers" {
   host          = "unix:///var/run/docker.sock"
-  targets       = discovery.docker.containers.targets
+  targets       = discovery.relabel.container_logs.output
   labels        = { platform = "docker" }
-  relabel_rules = discovery.relabel.container_logs.rules
   forward_to    = [loki.write.local.receiver]
 }
 

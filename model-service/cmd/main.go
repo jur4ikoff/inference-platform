@@ -15,11 +15,22 @@ import (
 	"github.com/jur4ikoff/model-service/internal/api"
 	"github.com/jur4ikoff/model-service/internal/auth"
 	"github.com/jur4ikoff/model-service/internal/config"
+	"github.com/jur4ikoff/model-service/internal/idempotency"
 	"github.com/jur4ikoff/model-service/internal/repository"
 	"github.com/jur4ikoff/model-service/internal/service"
+	"github.com/jur4ikoff/model-service/internal/transport"
+	"github.com/jur4ikoff/utils/httpmiddleware"
+	"github.com/jur4ikoff/utils/logging"
+	"github.com/jur4ikoff/utils/metrics"
+	"github.com/jur4ikoff/utils/telemetry"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
+	_ "google.golang.org/grpc/balancer/roundrobin"
 	"google.golang.org/grpc/credentials/insecure"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/resolver/dns"
 )
 
 func main() {
@@ -28,47 +39,106 @@ func main() {
 		slog.Error("load configuration", "error", err)
 		os.Exit(1)
 	}
+	logger, err := logging.NewLogger(cfg.Environment, cfg.LogLevel, "model-service", cfg.Version)
+	if err != nil {
+		slog.Error("create logger", "error", err)
+		os.Exit(1)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	shutdownTracing, err := telemetry.Init(ctx, "model-service", cfg.Version, cfg.Environment)
+	if err != nil {
+		logger.Error().Err(err).Msg("initialize tracing")
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(shutdownCtx); err != nil {
+			logger.Error().Err(err).Msg("shutdown tracing")
+		}
+	}()
 
 	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
 	if err != nil {
-		slog.Error("parse database configuration", "error", err)
+		logger.Error().Err(err).Msg("parse database configuration")
 		os.Exit(1)
 	}
 	poolConfig.MaxConns = cfg.DatabaseMaxConn
 	poolConfig.MinConns = cfg.DatabaseMinConn
+	poolConfig.ConnConfig.Tracer = telemetry.QueryTracer{}
 	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
-		slog.Error("connect to PostgreSQL", "error", err)
+		logger.Error().Err(err).Msg("connect to PostgreSQL")
 		os.Exit(1)
 	}
 	defer pool.Close()
 	if err := pool.Ping(ctx); err != nil {
-		slog.Error("ping PostgreSQL", "error", err)
+		logger.Error().Err(err).Msg("ping PostgreSQL")
 		os.Exit(1)
 	}
+	idempotencyConfig := poolConfig.Copy()
+	idempotencyConfig.MaxConns = 4
+	idempotencyConfig.MinConns = 0
+	idempotencyPool, err := pgxpool.NewWithConfig(ctx, idempotencyConfig)
+	if err != nil {
+		logger.Error().Err(err).Msg("create idempotency database pool")
+		os.Exit(1)
+	}
+	defer idempotencyPool.Close()
+	var readPool *pgxpool.Pool
+	if cfg.ReadDatabaseURL != "" {
+		readConfig, err := pgxpool.ParseConfig(cfg.ReadDatabaseURL)
+		if err != nil {
+			logger.Error().Err(err).Msg("parse standby database configuration")
+			os.Exit(1)
+		}
+		readConfig.MaxConns = cfg.DatabaseMaxConn
+		readConfig.MinConns = cfg.DatabaseMinConn
+		readConfig.ConnConfig.Tracer = telemetry.QueryTracer{}
+		readPool, err = pgxpool.NewWithConfig(ctx, readConfig)
+		if err != nil {
+			logger.Error().Err(err).Msg("create standby database pool")
+			os.Exit(1)
+		}
+		defer readPool.Close()
+		if err := readPool.Ping(ctx); err != nil {
+			logger.Error().Err(err).Msg("ping standby database")
+			os.Exit(1)
+		}
+	}
 
+	dns.SetMinResolutionInterval(time.Second)
 	connection, err := grpc.NewClient(cfg.InferenceGRPCAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`),
+		grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.Config{BaseDelay: 100 * time.Millisecond, Multiplier: 1.6, Jitter: 0.2, MaxDelay: time.Second}, MinConnectTimeout: time.Second}),
+		grpc.WithChainUnaryInterceptor(transport.RetryReads),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize((10<<20)+1024)),
 	)
 	if err != nil {
-		slog.Error("create inference client", "error", err)
+		logger.Error().Err(err).Msg("create inference client")
 		os.Exit(1)
 	}
 	defer connection.Close()
+	modelRepo := repository.NewModelRepository(pool)
+	if readPool != nil {
+		modelRepo = repository.NewModelRepository(pool, readPool)
+	}
 	models := service.NewModelService(
-		repository.NewModelRepository(pool),
+		modelRepo,
 		service.NewGRPCModelRuntime(inferencev1.NewInferenceServiceClient(connection)),
 	)
-	verifier, err := auth.NewJWKSVerifier(cfg.UserJWKSURL, cfg.JWTIssuer, cfg.JWTAudience, &http.Client{Timeout: 3 * time.Second}, cfg.JWKSCacheTTL)
+	verifier, err := auth.NewJWKSVerifier(cfg.UserJWKSURL, cfg.JWTIssuer, cfg.JWTAudience, &http.Client{Timeout: 3 * time.Second, Transport: transport.RetryHTTPReads{Next: otelhttp.NewTransport(http.DefaultTransport)}}, cfg.JWKSCacheTTL)
 	if err != nil {
-		slog.Error("configure JWT verifier", "error", err)
+		logger.Error().Err(err).Msg("configure JWT verifier")
 		os.Exit(1)
 	}
 	root := http.NewServeMux()
+	appMetrics := metrics.New()
+	root.Handle("GET /metrics", appMetrics.Handler())
 	root.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	root.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		checkCtx, cancel := context.WithTimeout(r.Context(), time.Second)
@@ -77,6 +147,12 @@ func main() {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
+		if readPool != nil {
+			if err := readPool.Ping(checkCtx); err != nil {
+				http.Error(w, "not ready", http.StatusServiceUnavailable)
+				return
+			}
+		}
 		result, err := healthv1.NewHealthClient(connection).Check(checkCtx, &healthv1.HealthCheckRequest{Service: "inference.v1.InferenceService"})
 		if err != nil || result.GetStatus() != healthv1.HealthCheckResponse_SERVING {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
@@ -84,10 +160,25 @@ func main() {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	root.Handle("/", api.NewHandler(models, verifier).Router())
+	router := api.NewHandler(models, verifier).WithIdempotencyStore(idempotency.New(idempotencyPool)).Router()
+	root.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.Header.Get("X-Model-Read-Primary") != "true" {
+			r = r.WithContext(repository.WithReplicaRead(r.Context()))
+		}
+		router.ServeHTTP(w, r)
+	}))
+	var handler http.Handler = root
+	if cfg.ReadOnly {
+		handler = httpmiddleware.ReadOnly(handler)
+	}
+	handler = appMetrics.InstrumentHTTP(handler)
+	next := handler
+	handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(telemetry.WithLogger(r.Context(), logger)))
+	})
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           http.TimeoutHandler(root, cfg.RequestTimeout, `{"error":"request timed out"}`),
+		Handler:           telemetry.HTTPHandler(http.TimeoutHandler(handler, cfg.RequestTimeout, `{"error":"request timed out"}`), "model-service"),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       cfg.RequestTimeout,
 		WriteTimeout:      cfg.RequestTimeout,
@@ -96,20 +187,21 @@ func main() {
 
 	errorsChannel := make(chan error, 1)
 	go func() {
-		slog.Info("model service started", "address", cfg.HTTPAddr)
+		logger.Info().Str("address", cfg.HTTPAddr).Bool("read_only", cfg.ReadOnly).Msg("model service started")
 		errorsChannel <- server.ListenAndServe()
 	}()
 
 	select {
 	case <-ctx.Done():
+		logger.Info().Msg("model service shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownCtx); err != nil {
-			slog.Error("shutdown server", "error", err)
+			logger.Error().Err(err).Msg("shutdown server")
 		}
 	case err := <-errorsChannel:
 		if !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("run server", "error", err)
+			logger.Error().Err(err).Msg("run server")
 		}
 	}
 }

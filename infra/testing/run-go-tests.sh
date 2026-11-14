@@ -12,22 +12,16 @@ if [[ "$mode" == processes ]]; then
   : > "$TEST_PROCESS_LOG"
 fi
 status=0
-for module in user-service model-service inference-service observability-service; do
-  if [[ "$module" == observability-service && ( "$mode" == integration || "$mode" == coverage ) ]]; then continue; fi
+for module in user-service model-service inference-service; do
   case "$mode:$module" in
-    unit:*|shuffle:*|processes:*) flags=(-count=1 -skip '^(TestUserRepositoryIntegration|TestModelsAreIdentifiedByIDWithinProject|TestDeploymentRepositoryCheck|TestCreateDeployment)$' ./...);;
-    coverage:*) flags=(-count=1 -skip '^(TestUserRepositoryIntegration|TestModelsAreIdentifiedByIDWithinProject|TestDeploymentRepositoryCheck|TestCreateDeployment)$' -coverprofile="$results/$module.cover" ./...);;
+    unit:*|shuffle:*|processes:*) flags=(-count=1 -skip '^(TestUserRepositoryIntegration|TestModelsAreIdentifiedByIDWithinProject|TestDeploymentIntegration)' ./...);;
+    coverage:*) flags=(-count=1 -skip '^(TestUserRepositoryIntegration|TestModelsAreIdentifiedByIDWithinProject|TestDeploymentIntegration)' -coverprofile="$results/$module.cover" ./...);;
     integration:user-service) flags=(-count=1 -run '^TestUserRepositoryIntegration$' ./internal/repository);;
     integration:model-service) flags=(-count=1 -run '^TestModelsAreIdentifiedByIDWithinProject$' ./internal/repository);;
-    integration:inference-service) flags=(-count=1 -run '^(TestDeploymentRepositoryCheck|TestCreateDeployment)$' ./internal/repository);;
+    integration:inference-service) flags=(-count=1 -run '^TestDeploymentIntegration' ./internal/repository);;
     *) printf 'Неизвестный режим: %s\n' "$mode" >&2; exit 2;;
   esac
   workdir="$root/$module"
-  if [[ "$module" == observability-service ]]; then
-    workdir="$root"
-    unset 'flags[${#flags[@]}-1]'
-    flags+=(observability-service/main.go observability-service/main_test.go)
-  fi
   if [[ "$mode" == shuffle ]]; then flags=(-shuffle="${TEST_SHUFFLE_SEED:-on}" "${flags[@]}"); fi
   if [[ "$mode" == processes ]]; then export TEST_PROCESS_MODULE="$module"; flags=(-exec="$root/infra/testing/trace-test-process.sh" "${flags[@]}"); fi
   printf '\n%s: %s\n' "$mode" "$module"

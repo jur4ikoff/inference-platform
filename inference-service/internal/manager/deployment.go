@@ -1,5 +1,7 @@
 package manager
 
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=deployment.go -destination=deployment_mock_test.go -package=manager -mock_names=DeploymentRepository=MockManagerRepository,Runtime=MockManagerRuntime,RouteRegistry=MockRouteRegistry
+
 import (
 	"context"
 	"errors"

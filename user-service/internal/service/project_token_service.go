@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"github.com/rs/zerolog/log"
 	"strings"
 	"time"
 )
@@ -19,7 +20,14 @@ func NewProjectTokenService(projects ProjectTokenRepository, tokens TokenManager
 	return &ProjectTokenService{projects: projects, tokens: tokens, ttl: ttl, clock: clock}
 }
 
-func (s *ProjectTokenService) Create(ctx context.Context, projectName string) (AccessToken, error) {
+func (s *ProjectTokenService) Create(ctx context.Context, projectName string) (_ AccessToken, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "ProjectTokenService").Err(resultErr).Msg("Create failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ProjectTokenService").Msg("Create completed")
+	}()
 	principal, ok := PrincipalFromContext(ctx)
 	if !ok || strings.TrimSpace(projectName) == "" {
 		return AccessToken{}, ErrInvalidToken
