@@ -43,6 +43,11 @@ func (d *RuntimeService) GetContainer(ctx context.Context, id string) (dockerCli
 	return d.client.ContainerInspect(ctx, id, dockerClient.ContainerInspectOptions{})
 }
 
+func (d *RuntimeService) ListServiceContainers(ctx context.Context, project string) (dockerClient.ContainerListResult, error) {
+	filters := make(dockerClient.Filters).Add("label", "com.docker.compose.project="+project)
+	return d.client.ContainerList(ctx, dockerClient.ContainerListOptions{Filters: filters})
+}
+
 func (d *RuntimeService) ContainerEndpoint(info dockerClient.ContainerInspectResult) (string, error) {
 	if d.runtimeConfig.DockerNetwork != "" {
 		name := strings.TrimPrefix(info.Container.Name, "/")

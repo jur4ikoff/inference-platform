@@ -71,3 +71,7 @@ for migration in "$migrations_dir"/*.sql; do
 done
 
 log "All migrations completed"
+log "Configuring the replication role"
+psql < "$root_dir/infra/postgres/configure_replication.sql"
+docker compose -p "$compose_project" --project-directory "$root_dir" --env-file "$env_file" -f "$compose_file" \
+    exec -T postgres sh /docker-entrypoint-initdb.d/30-replication-access.sh

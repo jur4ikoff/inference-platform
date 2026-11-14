@@ -85,14 +85,29 @@ func TestGetDeploymentUsesModelIDAndProject(t *testing.T) {
 
 type runtimeClient struct {
 	inferencev1.InferenceServiceClient
-	err error
+	err      error
+	username string
 }
 
-func (c *runtimeClient) StartDeployment(_ context.Context, _ *inferencev1.StartDeploymentRequest, _ ...grpc.CallOption) (*inferencev1.StartDeploymentResponse, error) {
+func (c *runtimeClient) StartDeployment(_ context.Context, request *inferencev1.StartDeploymentRequest, _ ...grpc.CallOption) (*inferencev1.StartDeploymentResponse, error) {
+	c.username = request.GetUsername()
 	if c.err != nil {
 		return nil, c.err
 	}
 	return &inferencev1.StartDeploymentResponse{State: &inferencev1.ModelState{DeploymentId: "id"}}, nil
+}
+
+func TestCreateDeploymentUsesInitiatingUser(t *testing.T) {
+	client := &runtimeClient{}
+	runtime := NewGRPCModelRuntime(client)
+	model := testutil.ModelMother{}.HuggingFace()
+	model.Username = "model-owner"
+	if _, err := runtime.CreateDeployment(WithActor(context.Background(), "initiator"), model); err != nil {
+		t.Fatal(err)
+	}
+	if client.username != "initiator" {
+		t.Fatalf("deployment username = %q", client.username)
+	}
 }
 func (c *runtimeClient) StopDeployment(_ context.Context, _ *inferencev1.StopDeploymentRequest, _ ...grpc.CallOption) (*inferencev1.StopDeploymentResponse, error) {
 	return &inferencev1.StopDeploymentResponse{}, c.err

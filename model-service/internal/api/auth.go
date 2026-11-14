@@ -8,6 +8,9 @@ import (
 	"strings"
 
 	"github.com/jur4ikoff/model-service/internal/auth"
+	"github.com/jur4ikoff/model-service/internal/service"
+	"github.com/rs/zerolog/log"
+	"google.golang.org/grpc/metadata"
 )
 
 type principalContextKey struct{}
@@ -42,7 +45,12 @@ func (h *Handler) authorize(next http.Handler) http.Handler {
 			writeAuthError(w, http.StatusForbidden, "access denied")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
+		ctx := context.WithValue(r.Context(), principalContextKey{}, principal)
+		ctx = service.WithActor(ctx, principal.Username)
+		logger := log.Ctx(ctx).With().Str("username", principal.Username).Str("project", project).Logger()
+		ctx = logger.WithContext(ctx)
+		ctx = metadata.AppendToOutgoingContext(ctx, "x-log-username", principal.Username, "x-log-project", project)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 

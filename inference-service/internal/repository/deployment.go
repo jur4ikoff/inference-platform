@@ -1,5 +1,7 @@
 package repository
 
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=../infrastructure/dao/db.go -destination=db_mock_test.go -package=repository_test -mock_names=DBTX=MockDBTX
+
 import (
 	"context"
 	"encoding/json"

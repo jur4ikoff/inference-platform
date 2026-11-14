@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Техника: класс существующего deployment.
+// Техника: разбиение на классы эквивалентности; случай существующего deployment.
 func TestStartExistingDeploymentReturnsAlreadyExists(t *testing.T) {
 	svc := service.NewDeploymentService(existingDeploymentRepository{}, config.ServiceConfig{}, nil)
 	response, err := NewHandler(svc).StartDeployment(context.Background(), validStartDeploymentRequest())
@@ -31,7 +31,7 @@ func (existingDeploymentRepository) ActiveDeploymentExists(context.Context, stri
 	return true, nil
 }
 
-// Техника: класс временных меток при сериализации.
+// Техника: разбиение на классы эквивалентности; случай временных меток при сериализации.
 func TestDeploymentTimestampsProtoRoundTrip(t *testing.T) {
 	started := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	updated := started.Add(time.Minute)

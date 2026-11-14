@@ -1,6 +1,8 @@
 services:
   postgres:
     image: postgres:16-alpine
+    cpus: ${TEST_POSTGRES_CPUS:-1.0}
+    mem_limit: ${TEST_POSTGRES_MEMORY_LIMIT:-384m}
     environment:
       POSTGRES_USER: test
       POSTGRES_PASSWORD: test

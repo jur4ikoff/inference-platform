@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"github.com/rs/zerolog/log"
 	"strings"
 	"time"
 
@@ -33,6 +34,13 @@ type ModelService struct {
 	now     func() time.Time
 }
 
+type actorKey struct{}
+
+// WithActor records the verified user responsible for a deployment request.
+func WithActor(ctx context.Context, username string) context.Context {
+	return context.WithValue(ctx, actorKey{}, username)
+}
+
 func NewModelService(models ModelRepository, runtime ModelRuntime) *ModelService {
 	return &ModelService{models: models, runtime: runtime, now: time.Now}
 }
@@ -51,7 +59,14 @@ type UpdateModelInput struct {
 	Spec        *domain.ModelSpec
 }
 
-func (s *ModelService) Create(ctx context.Context, input CreateModelInput) (domain.Model, error) {
+func (s *ModelService) Create(ctx context.Context, input CreateModelInput) (result domain.Model, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "ModelService").Msg("Create failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ModelService").Str("model_id", result.ID).Str("project", result.Project).Msg("model created")
+	}()
 	name, username, project := strings.TrimSpace(input.Name), strings.TrimSpace(input.Username), strings.TrimSpace(input.Project)
 	if !domain.ValidModelName(name) || username == "" || project == "" || input.Spec.Validate() != nil {
 		return domain.Model{}, ErrInvalidInput
@@ -74,7 +89,17 @@ func (s *ModelService) Create(ctx context.Context, input CreateModelInput) (doma
 	return saved, nil
 }
 
-func (s *ModelService) Get(ctx context.Context, project, modelID string) (domain.Model, error) {
+func (s *ModelService) Get(ctx context.Context, project, modelID string) (_ domain.Model, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "ModelService").Msg("Get failed")
+			return
+		}
+	}()
+	return s.get(ctx, project, modelID)
+}
+
+func (s *ModelService) get(ctx context.Context, project, modelID string) (domain.Model, error) {
 	project, modelID = strings.TrimSpace(project), strings.TrimSpace(modelID)
 	if project == "" || !validModelID(modelID) {
 		return domain.Model{}, ErrInvalidInput
@@ -82,7 +107,14 @@ func (s *ModelService) Get(ctx context.Context, project, modelID string) (domain
 	return s.models.Get(ctx, project, modelID)
 }
 
-func (s *ModelService) Update(ctx context.Context, project, modelID string, input UpdateModelInput) (domain.Model, error) {
+func (s *ModelService) Update(ctx context.Context, project, modelID string, input UpdateModelInput) (result domain.Model, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "ModelService").Msg("Update failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ModelService").Str("model_id", result.ID).Str("project", result.Project).Msg("model updated")
+	}()
 	project, modelID = strings.TrimSpace(project), strings.TrimSpace(modelID)
 	if project == "" || !validModelID(modelID) || (input.Name == nil && input.Description == nil && input.Spec == nil) {
 		return domain.Model{}, ErrInvalidInput
@@ -108,7 +140,14 @@ func (s *ModelService) Update(ctx context.Context, project, modelID string, inpu
 	return s.models.Update(ctx, project, modelID, input.Name, input.Description, spec, s.now().UTC())
 }
 
-func (s *ModelService) Delete(ctx context.Context, project, modelID string) error {
+func (s *ModelService) Delete(ctx context.Context, project, modelID string) (resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "ModelService").Msg("Delete failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ModelService").Str("model_id", modelID).Str("project", project).Msg("model deleted")
+	}()
 	project, modelID = strings.TrimSpace(project), strings.TrimSpace(modelID)
 	if project == "" || !validModelID(modelID) {
 		return ErrInvalidInput
@@ -131,8 +170,15 @@ func (s *ModelService) Delete(ctx context.Context, project, modelID string) erro
 	return s.models.Delete(ctx, project, modelID)
 }
 
-func (s *ModelService) Start(ctx context.Context, project, modelID string) (domain.ModelState, error) {
-	model, err := s.Get(ctx, project, modelID)
+func (s *ModelService) Start(ctx context.Context, project, modelID string) (_ domain.ModelState, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "ModelService").Msg("Start failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ModelService").Str("model_id", modelID).Str("project", project).Msg("model started")
+	}()
+	model, err := s.get(ctx, project, modelID)
 	if err != nil {
 		return domain.ModelState{}, err
 	}
@@ -142,8 +188,15 @@ func (s *ModelService) Start(ctx context.Context, project, modelID string) (doma
 	return domain.ModelState{ModelID: model.ID, Project: model.Project, Name: model.Name, Status: "running"}, nil
 }
 
-func (s *ModelService) CreateDeployment(ctx context.Context, project, modelID string) (domain.Deployment, error) {
-	model, err := s.Get(ctx, project, modelID)
+func (s *ModelService) CreateDeployment(ctx context.Context, project, modelID string) (result domain.Deployment, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "ModelService").Msg("CreateDeployment failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ModelService").Str("model_id", modelID).Str("deployment_id", result.ID).Str("project", project).Msg("deployment created")
+	}()
+	model, err := s.get(ctx, project, modelID)
 	if err != nil {
 		return domain.Deployment{}, err
 	}
@@ -153,8 +206,18 @@ func (s *ModelService) CreateDeployment(ctx context.Context, project, modelID st
 	return s.runtime.CreateDeployment(ctx, model)
 }
 
-func (s *ModelService) GetDeployment(ctx context.Context, project, modelID string) (domain.Deployment, error) {
-	model, err := s.Get(ctx, project, modelID)
+func (s *ModelService) GetDeployment(ctx context.Context, project, modelID string) (_ domain.Deployment, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "ModelService").Msg("GetDeployment failed")
+			return
+		}
+	}()
+	return s.getDeployment(ctx, project, modelID)
+}
+
+func (s *ModelService) getDeployment(ctx context.Context, project, modelID string) (domain.Deployment, error) {
+	model, err := s.get(ctx, project, modelID)
 	if err != nil {
 		return domain.Deployment{}, err
 	}
@@ -164,7 +227,13 @@ func (s *ModelService) GetDeployment(ctx context.Context, project, modelID strin
 	return s.runtime.GetDeployment(ctx, model)
 }
 
-func (s *ModelService) GetDeploymentsHistory(ctx context.Context, project string) ([]domain.Deployment, error) {
+func (s *ModelService) GetDeploymentsHistory(ctx context.Context, project string) (_ []domain.Deployment, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "ModelService").Msg("GetDeploymentsHistory failed")
+			return
+		}
+	}()
 	project = strings.TrimSpace(project)
 	if project == "" {
 		return nil, ErrInvalidInput
@@ -175,7 +244,13 @@ func (s *ModelService) GetDeploymentsHistory(ctx context.Context, project string
 	return s.runtime.GetDeploymentsHistory(ctx, project)
 }
 
-func (s *ModelService) GetActiveDeployments(ctx context.Context, project string) ([]domain.Deployment, error) {
+func (s *ModelService) GetActiveDeployments(ctx context.Context, project string) (_ []domain.Deployment, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "ModelService").Msg("GetActiveDeployments failed")
+			return
+		}
+	}()
 	project = strings.TrimSpace(project)
 	if project == "" {
 		return nil, ErrInvalidInput
@@ -188,8 +263,15 @@ func (s *ModelService) GetActiveDeployments(ctx context.Context, project string)
 
 // StopDeployment returns true when an asynchronous stop request was accepted.
 // Missing and terminal deployments are intentionally idempotent no-ops.
-func (s *ModelService) StopDeployment(ctx context.Context, project, modelID string) (bool, error) {
-	deployment, err := s.GetDeployment(ctx, project, modelID)
+func (s *ModelService) StopDeployment(ctx context.Context, project, modelID string) (accepted bool, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "ModelService").Msg("StopDeployment failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ModelService").Str("model_id", modelID).Str("project", project).Bool("accepted", accepted).Msg("deployment stop requested")
+	}()
+	deployment, err := s.getDeployment(ctx, project, modelID)
 	if errors.Is(err, ErrDeploymentNotFound) {
 		return false, nil
 	}

@@ -22,6 +22,9 @@ func NewGRPCModelRuntime(client inferencev1.InferenceServiceClient) *GRPCModelRu
 }
 
 func (r *GRPCModelRuntime) Start(ctx context.Context, model domain.Model) error {
+	if actor, ok := ctx.Value(actorKey{}).(string); ok && actor != "" {
+		model.Username = actor
+	}
 	rawSpec, err := model.Spec.CanonicalJSON()
 	if err != nil {
 		return fmt.Errorf("%w: decode model spec: %v", ErrInvalidInput, err)
@@ -41,6 +44,9 @@ func (r *GRPCModelRuntime) Start(ctx context.Context, model domain.Model) error 
 }
 
 func (r *GRPCModelRuntime) CreateDeployment(ctx context.Context, model domain.Model) (domain.Deployment, error) {
+	if actor, ok := ctx.Value(actorKey{}).(string); ok && actor != "" {
+		model.Username = actor
+	}
 	rawSpec, err := model.Spec.CanonicalJSON()
 	if err != nil {
 		return domain.Deployment{}, fmt.Errorf("%w: decode model spec: %v", ErrInvalidInput, err)

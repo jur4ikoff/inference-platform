@@ -15,11 +15,29 @@ import (
 )
 
 type ModelRepository struct {
-	queries *modeldao.Queries
+	queries     *modeldao.Queries
+	readQueries *modeldao.Queries
 }
 
-func NewModelRepository(pool modeldao.DBTX) *ModelRepository {
-	return &ModelRepository{queries: modeldao.New(pool)}
+type replicaReadKey struct{}
+
+func WithReplicaRead(ctx context.Context) context.Context {
+	return context.WithValue(ctx, replicaReadKey{}, true)
+}
+
+func NewModelRepository(pool modeldao.DBTX, readers ...modeldao.DBTX) *ModelRepository {
+	r := &ModelRepository{queries: modeldao.New(pool)}
+	if len(readers) > 0 && readers[0] != nil {
+		r.readQueries = modeldao.New(readers[0])
+	}
+	return r
+}
+
+func (r *ModelRepository) reader(ctx context.Context) *modeldao.Queries {
+	if useReplica, _ := ctx.Value(replicaReadKey{}).(bool); useReplica && r.readQueries != nil {
+		return r.readQueries
+	}
+	return r.queries
 }
 
 func (r *ModelRepository) Create(ctx context.Context, model domain.Model) (domain.Model, error) {
@@ -48,12 +66,12 @@ func (r *ModelRepository) Create(ctx context.Context, model domain.Model) (domai
 }
 
 func (r *ModelRepository) Get(ctx context.Context, project, modelID string) (domain.Model, error) {
-	row, err := r.queries.GetModel(ctx, modeldao.GetModelParams{Project: project, ID: uuidValue(modelID)})
+	row, err := r.reader(ctx).GetModel(ctx, modeldao.GetModelParams{Project: project, ID: uuidValue(modelID)})
 	return modelResult(row, err)
 }
 
 func (r *ModelRepository) List(ctx context.Context, project string, offset, limit int) ([]domain.Model, error) {
-	rows, err := r.queries.ListModels(ctx, modeldao.ListModelsParams{
+	rows, err := r.reader(ctx).ListModels(ctx, modeldao.ListModelsParams{
 		Project:    project,
 		PageLimit:  int64(limit),
 		PageOffset: int64(offset),

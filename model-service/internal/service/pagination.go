@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"github.com/rs/zerolog/log"
 	"math"
 	"strings"
 
@@ -20,7 +21,13 @@ type ModelsPage struct {
 	Statuses      map[string]string
 }
 
-func (s *ModelService) List(ctx context.Context, input ListModelsInput) (ModelsPage, error) {
+func (s *ModelService) List(ctx context.Context, input ListModelsInput) (_ ModelsPage, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "ModelService").Msg("List failed")
+			return
+		}
+	}()
 	input.Project = strings.TrimSpace(input.Project)
 	if input.Project == "" {
 		return ModelsPage{}, ErrInvalidInput

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"github.com/rs/zerolog/log"
 	"math"
 	"regexp"
 	"strings"
@@ -29,7 +30,14 @@ type ProjectsPage struct {
 	NextPageToken *int
 }
 
-func (s *ProjectService) ListProjects(ctx context.Context, input ListProjectsInput) (ProjectsPage, error) {
+func (s *ProjectService) ListProjects(ctx context.Context, input ListProjectsInput) (_ ProjectsPage, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "ProjectService").Err(resultErr).Msg("ListProjects failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ProjectService").Msg("ListProjects completed")
+	}()
 	actor, err := projectActor(ctx)
 	if err != nil {
 		return ProjectsPage{}, err
@@ -67,7 +75,16 @@ func projectActor(ctx context.Context) (domain.UserID, error) {
 	}
 	return p.UserID, nil
 }
-func (s *ProjectService) CreateProject(ctx context.Context, name, description string) (domain.Project, error) {
+func (s *ProjectService) CreateProject(ctx context.Context, name, description string) (_ domain.Project, resultErr error) {
+	logger := log.Ctx(ctx).With().Str("project", name).Logger()
+	ctx = logger.WithContext(ctx)
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "ProjectService").Err(resultErr).Msg("CreateProject failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ProjectService").Msg("CreateProject completed")
+	}()
 	a, e := projectActor(ctx)
 	if e != nil {
 		return domain.Project{}, e
@@ -77,7 +94,14 @@ func (s *ProjectService) CreateProject(ctx context.Context, name, description st
 	}
 	return s.projects.Create(ctx, a, name, description)
 }
-func (s *ProjectService) GetProject(ctx context.Context, name string) (domain.Project, error) {
+func (s *ProjectService) GetProject(ctx context.Context, name string) (_ domain.Project, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "ProjectService").Err(resultErr).Msg("GetProject failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ProjectService").Msg("GetProject completed")
+	}()
 	a, e := projectActor(ctx)
 	if e != nil {
 		return domain.Project{}, e
@@ -87,7 +111,14 @@ func (s *ProjectService) GetProject(ctx context.Context, name string) (domain.Pr
 	}
 	return s.projects.Get(ctx, a, name)
 }
-func (s *ProjectService) UpdateProject(ctx context.Context, name string, description *string) (domain.Project, error) {
+func (s *ProjectService) UpdateProject(ctx context.Context, name string, description *string) (_ domain.Project, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "ProjectService").Err(resultErr).Msg("UpdateProject failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ProjectService").Msg("UpdateProject completed")
+	}()
 	a, e := projectActor(ctx)
 	if e != nil {
 		return domain.Project{}, e
@@ -97,7 +128,14 @@ func (s *ProjectService) UpdateProject(ctx context.Context, name string, descrip
 	}
 	return s.projects.Update(ctx, a, name, *description)
 }
-func (s *ProjectService) DeleteProject(ctx context.Context, name string) error {
+func (s *ProjectService) DeleteProject(ctx context.Context, name string) (resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "ProjectService").Err(resultErr).Msg("DeleteProject failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ProjectService").Msg("DeleteProject completed")
+	}()
 	a, e := projectActor(ctx)
 	if e != nil {
 		return e
@@ -113,7 +151,14 @@ type MembersPage struct {
 	NextPageToken *int
 }
 
-func (s *ProjectService) ListMembers(ctx context.Context, name string, offset, limit int) (MembersPage, error) {
+func (s *ProjectService) ListMembers(ctx context.Context, name string, offset, limit int) (_ MembersPage, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "ProjectService").Err(resultErr).Msg("ListMembers failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ProjectService").Msg("ListMembers completed")
+	}()
 	a, e := projectActor(ctx)
 	if e != nil {
 		return MembersPage{}, e
@@ -137,7 +182,14 @@ func (s *ProjectService) ListMembers(ctx context.Context, name string, offset, l
 	}
 	return p, nil
 }
-func (s *ProjectService) ChangeMember(ctx context.Context, name string, target domain.UserID, role domain.RoleID, remove bool) (bool, error) {
+func (s *ProjectService) ChangeMember(ctx context.Context, name string, target domain.UserID, role domain.RoleID, remove bool) (_ bool, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "ProjectService").Err(resultErr).Msg("ChangeMember failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "ProjectService").Msg("ChangeMember completed")
+	}()
 	a, e := projectActor(ctx)
 	if e != nil {
 		return false, e

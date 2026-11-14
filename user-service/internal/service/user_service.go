@@ -11,6 +11,7 @@ import (
 
 	"github.com/jur4ikoff/user-service/internal/domain"
 	"github.com/jur4ikoff/utils/authjwt"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -89,7 +90,14 @@ func NewUserService(
 	}
 }
 
-func (s *UserService) Register(ctx context.Context, input RegisterInput) (RegisteredUser, error) {
+func (s *UserService) Register(ctx context.Context, input RegisterInput) (_ RegisteredUser, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "UserService").Err(resultErr).Msg("Register failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "UserService").Msg("Register completed")
+	}()
 	firstname, lastname := strings.TrimSpace(input.Firstname), strings.TrimSpace(input.Lastname)
 	login := strings.ToLower(strings.TrimSpace(input.Login))
 	email, err := normalizeEmail(input.Email)
@@ -125,6 +133,8 @@ func (s *UserService) Register(ctx context.Context, input RegisterInput) (Regist
 	} else if err := s.users.Create(ctx, user); err != nil {
 		return RegisteredUser{}, err
 	}
+	logger := log.Ctx(ctx).With().Str("username", user.Login).Logger()
+	ctx = logger.WithContext(ctx)
 
 	return RegisteredUser{
 		ID: user.ID, Email: user.Email, Login: user.Login, PlatformRole: string(user.PlatformRole),
@@ -133,7 +143,14 @@ func (s *UserService) Register(ctx context.Context, input RegisterInput) (Regist
 	}, nil
 }
 
-func (s *UserService) Login(ctx context.Context, input LoginInput) (AccessToken, error) {
+func (s *UserService) Login(ctx context.Context, input LoginInput) (_ AccessToken, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "UserService").Err(resultErr).Msg("Login failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "UserService").Msg("Login completed")
+	}()
 	login := strings.ToLower(strings.TrimSpace(input.Login))
 	if !validLogin(login) {
 		return AccessToken{}, ErrInvalidCredentials
@@ -142,21 +159,23 @@ func (s *UserService) Login(ctx context.Context, input LoginInput) (AccessToken,
 	user, err := s.users.FindByLogin(ctx, login)
 	if err != nil {
 		if errors.Is(err, domain.ErrUserNotFound) {
-			// Equalise the most visible timing difference between an existing and
-			// non-existing account. Never expose which part of credentials failed.
 			dummy := dummyPasswordHash
 			if source, ok := s.hasher.(interface{ DummyHash() string }); ok {
 				dummy = source.DummyHash()
 			}
 			_ = s.hasher.Compare(dummy, input.Password)
+
 			return AccessToken{}, ErrInvalidCredentials
 		}
+
 		return AccessToken{}, err
 	}
 
 	if err := s.hasher.Compare(user.PasswordHash, input.Password); err != nil {
 		return AccessToken{}, ErrInvalidCredentials
 	}
+	logger := log.Ctx(ctx).With().Str("username", user.Login).Logger()
+	ctx = logger.WithContext(ctx)
 
 	now := s.clock.Now().UTC()
 	state := domain.AuthState{UserID: user.ID, PlatformRole: user.PlatformRole}
@@ -165,6 +184,7 @@ func (s *UserService) Login(ctx context.Context, input LoginInput) (AccessToken,
 	}); ok {
 		state, err = source.GetAuthState(ctx, user.ID)
 		if err != nil {
+			log.Ctx(ctx).Error().Err(err).Msg("failed to load authentication state during login")
 			return AccessToken{}, ErrInvalidCredentials
 		}
 	}
@@ -195,7 +215,14 @@ func (s *UserService) Login(ctx context.Context, input LoginInput) (AccessToken,
 	return AccessToken{Value: value, ExpiresAt: expiresAt}, nil
 }
 
-func (s *UserService) Verify(ctx context.Context, rawToken string) (Principal, error) {
+func (s *UserService) Verify(ctx context.Context, rawToken string) (_ Principal, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "UserService").Err(resultErr).Msg("Verify failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "UserService").Msg("Verify completed")
+	}()
 	if strings.TrimSpace(rawToken) == "" {
 		return Principal{}, ErrInvalidToken
 	}
@@ -208,6 +235,9 @@ func (s *UserService) Verify(ctx context.Context, rawToken string) (Principal, e
 		GetAuthState(context.Context, domain.UserID) (domain.AuthState, error)
 	}); ok {
 		state, stateErr := source.GetAuthState(ctx, principal.UserID)
+		if stateErr != nil {
+			log.Ctx(ctx).Error().Err(stateErr).Msg("failed to load authentication state during verification")
+		}
 		if stateErr != nil || state.AuthVersion != principal.AuthVersion || state.PlatformRole != principal.PlatformRole {
 			return Principal{}, ErrInvalidToken
 		}
@@ -225,7 +255,14 @@ func (s *UserService) PublicJWKSet() (authjwt.JWKSet, error) {
 	return provider.PublicJWKSet()
 }
 
-func (s *UserService) UpdateUser(ctx context.Context, id domain.UserID, input UpdateUserInput) (RegisteredUser, error) {
+func (s *UserService) UpdateUser(ctx context.Context, id domain.UserID, input UpdateUserInput) (_ RegisteredUser, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "UserService").Err(resultErr).Msg("UpdateUser failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "UserService").Msg("UpdateUser completed")
+	}()
 	if _, ok := s.users.(interface {
 		ActorRole(context.Context, domain.UserID) (string, error)
 	}); ok {
@@ -282,6 +319,7 @@ func (s *UserService) UpdateUser(ctx context.Context, id domain.UserID, input Up
 	if err != nil {
 		return RegisteredUser{}, err
 	}
+
 	return RegisteredUser{
 		ID: user.ID, Login: user.Login, Email: user.Email, PlatformRole: string(user.PlatformRole),
 		Firstname: user.Firstname, Lastname: user.Lastname,
@@ -289,7 +327,14 @@ func (s *UserService) UpdateUser(ctx context.Context, id domain.UserID, input Up
 	}, nil
 }
 
-func (s *UserService) DeleteUser(ctx context.Context, id domain.UserID) error {
+func (s *UserService) DeleteUser(ctx context.Context, id domain.UserID) (resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "UserService").Err(resultErr).Msg("DeleteUser failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "UserService").Msg("DeleteUser completed")
+	}()
 	if _, ok := s.users.(interface {
 		ActorRole(context.Context, domain.UserID) (string, error)
 	}); ok {
@@ -297,7 +342,11 @@ func (s *UserService) DeleteUser(ctx context.Context, id domain.UserID) error {
 			return err
 		}
 	}
-	return s.users.Delete(ctx, id)
+	if err := s.users.Delete(ctx, id); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 type ListUsersInput struct {
@@ -310,7 +359,14 @@ type UsersPage struct {
 	NextPageToken *int
 }
 
-func (s *UserService) ListUsers(ctx context.Context, input ListUsersInput) (UsersPage, error) {
+func (s *UserService) ListUsers(ctx context.Context, input ListUsersInput) (_ UsersPage, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "UserService").Err(resultErr).Msg("ListUsers failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "UserService").Msg("ListUsers completed")
+	}()
 	limit, err := normalizePageLimit(input.Offset, input.Limit)
 	if err != nil {
 		return UsersPage{}, err
@@ -374,7 +430,14 @@ func validLogin(login string) bool { return loginPattern.MatchString(login) }
 // account-enumeration timing differences when the account does not exist.
 const dummyPasswordHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
 
-func (s *UserService) GetUser(ctx context.Context, target domain.UserID) (RegisteredUser, error) {
+func (s *UserService) GetUser(ctx context.Context, target domain.UserID) (_ RegisteredUser, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "UserService").Err(resultErr).Msg("GetUser failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "UserService").Msg("GetUser completed")
+	}()
 	principal, ok := PrincipalFromContext(ctx)
 	if !ok {
 		return RegisteredUser{}, ErrInvalidToken
@@ -392,7 +455,14 @@ func (s *UserService) GetUser(ctx context.Context, target domain.UserID) (Regist
 	return RegisteredUser{ID: u.ID, Login: u.Login, Email: u.Email, PlatformRole: string(u.PlatformRole), Firstname: u.Firstname, Lastname: u.Lastname}, nil
 }
 
-func (s *UserService) GetUserByLogin(ctx context.Context, login string) (RegisteredUser, error) {
+func (s *UserService) GetUserByLogin(ctx context.Context, login string) (_ RegisteredUser, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "UserService").Err(resultErr).Msg("GetUserByLogin failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "UserService").Msg("GetUserByLogin completed")
+	}()
 	if _, ok := PrincipalFromContext(ctx); !ok || !validLogin(strings.ToLower(strings.TrimSpace(login))) {
 		return RegisteredUser{}, ErrInvalidToken
 	}
@@ -402,7 +472,14 @@ func (s *UserService) GetUserByLogin(ctx context.Context, login string) (Registe
 	}
 	return RegisteredUser{ID: u.ID, Login: u.Login, Email: u.Email, PlatformRole: string(u.PlatformRole), Firstname: u.Firstname, Lastname: u.Lastname}, nil
 }
-func (s *UserService) AuthorizeUser(ctx context.Context, target domain.UserID) error {
+func (s *UserService) AuthorizeUser(ctx context.Context, target domain.UserID) (resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Str("component", "UserService").Err(resultErr).Msg("AuthorizeUser failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "UserService").Msg("AuthorizeUser completed")
+	}()
 	principal, ok := PrincipalFromContext(ctx)
 	if !ok {
 		return ErrInvalidToken

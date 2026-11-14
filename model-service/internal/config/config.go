@@ -9,8 +9,12 @@ import (
 )
 
 type Config struct {
+	Environment       string
+	LogLevel          string
+	Version           string
 	HTTPAddr          string
 	DatabaseURL       string
+	ReadDatabaseURL   string
 	DatabaseMaxConn   int32
 	DatabaseMinConn   int32
 	RequestTimeout    time.Duration
@@ -19,9 +23,14 @@ type Config struct {
 	JWTIssuer         string
 	JWTAudience       string
 	JWKSCacheTTL      time.Duration
+	ReadOnly          bool
 }
 
 func Load() (Config, error) {
+	readOnly, err := strconv.ParseBool(envOrDefault("READ_ONLY", "false"))
+	if err != nil {
+		return Config{}, fmt.Errorf("READ_ONLY must be a boolean")
+	}
 	timeout, err := time.ParseDuration(envOrDefault("REQUEST_TIMEOUT", "90s"))
 	if err != nil || timeout <= 0 {
 		return Config{}, fmt.Errorf("REQUEST_TIMEOUT must be a positive duration")
@@ -50,8 +59,12 @@ func Load() (Config, error) {
 	}
 
 	return Config{
+		Environment:       envOrDefault("APP_ENV", "production"),
+		LogLevel:          envOrDefault("LOG_LEVEL", "info"),
+		Version:           envOrDefault("APP_VERSION", "dev"),
 		HTTPAddr:          envOrDefault("HTTP_ADDR", ":8081"),
 		DatabaseURL:       databaseURL,
+		ReadDatabaseURL:   strings.TrimSpace(os.Getenv("READ_DATABASE_URL")),
 		DatabaseMaxConn:   maxConn,
 		DatabaseMinConn:   minConn,
 		RequestTimeout:    timeout,
@@ -60,6 +73,7 @@ func Load() (Config, error) {
 		JWTIssuer:         issuer,
 		JWTAudience:       audience,
 		JWKSCacheTTL:      cacheTTL,
+		ReadOnly:          readOnly,
 	}, nil
 }
 

@@ -1,0 +1,66 @@
+services:
+  locust:
+    image: locustio/locust:2.32.10
+    cpus: ${LOCUST_CPUS:-2.0}
+    mem_limit: ${LOCUST_MEMORY_LIMIT:-1g}
+    environment:
+      BOOTSTRAP_ADMIN_LOGIN: ${BOOTSTRAP_ADMIN_LOGIN:?set BOOTSTRAP_ADMIN_LOGIN in infra/.env}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?set BOOTSTRAP_ADMIN_PASSWORD in infra/.env}
+      MODEL_TEST_PROJECT: ${MODEL_TEST_PROJECT:-stress-test}
+    volumes:
+      - ./locustfile.py:/mnt/locust/locustfile.py:ro
+      - ./docker-results:/results
+    networks:
+      - platform
+    command:
+      - -f
+      - /mnt/locust/locustfile.py
+      - --headless
+      - --host
+      - http://nginx:80
+      - --users
+      - "25"
+      - --spawn-rate
+      - "10"
+      - --run-time
+      - 60s
+      - --csv
+      - /results/results
+      - --only-summary
+
+  locust-ui:
+    extends:
+      service: locust
+    ports:
+      - "127.0.0.1:8089:8089"
+    command:
+      - -f
+      - /mnt/locust/locustfile.py
+      - --host
+      - http://nginx:80
+      - --web-host
+      - 0.0.0.0
+      - --master
+
+  locust-worker:
+    extends:
+      service: locust
+    deploy:
+      replicas: ${LOCUST_WORKERS:-2}
+    cpus: ${LOCUST_WORKER_CPUS:-1.0}
+    mem_limit: ${LOCUST_WORKER_MEMORY_LIMIT:-512m}
+    depends_on:
+      - locust-ui
+    command:
+      - -f
+      - /mnt/locust/locustfile.py
+      - --host
+      - http://nginx:80
+      - --worker
+      - --master-host
+      - locust-ui
+
+networks:
+  platform:
+    external: true
+    name: ${MODEL_TEST_NETWORK:-inference-platform_default}

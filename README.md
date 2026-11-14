@@ -44,17 +44,20 @@ B2B AI SAAS
 ```sh
 make up                 # Инфраструктура, PostgreSQL с миграциями, user/model/inference-service
 make up-database        # PostgreSQL и миграции
-make up-services        # PostgreSQL с миграциями и три прикладных сервиса
-make up-infra           # Grafana, Loki, Tempo, OTel Collector и Alloy
+make up-services        # Мониторинг, PostgreSQL с миграциями и прикладные сервисы
+make up-infra           # Grafana, Prometheus, Loki, Tempo, OTel Collector и Alloy
 make up-inference       # Inference-service и его зависимости
 make restart-inference  # Пересборка и перезапуск inference-service
 make logs-inference     # Логи inference-service
 ```
 
-`make up-services` сначала поднимает PostgreSQL, ждёт готовности и применяет миграции,
-затем запускает приложения, NGINX и Adminer с `--no-deps`. При ошибке БД или миграций запуск
-приложений не выполняется. Мониторинг запускается
-отдельно командой `make up-infra`. Для полного запуска используйте `make up`.
+Grafana доступна через `/monitoring/`; устройство метрик, логов и dashboard
+описано в [документации наблюдаемости](docs/monitoring.md).
+
+`make up-services` запускает мониторинг и PostgreSQL, применяет миграции,
+затем запускает приложения, NGINX и Adminer с `--no-deps`. При ошибке БД или
+миграций запуск приложений не выполняется. Только мониторинг можно запустить
+командой `make up-infra`.
 
 Контейнеры настроены на автоматический перезапуск при сбое и запуске Docker.
 На macOS включите в Docker Desktop настройку **Settings → General → Start Docker Desktop when you sign in to your computer**. Сначала запустите стек командой `make up`: после этого Docker Desktop восстановит контейнеры при следующем запуске. Команда `make down` удаляет контейнеры, поэтому после неё для повторного запуска нужен `make up`.
@@ -63,6 +66,11 @@ Inference-service входит в общий Compose-проект: `make ps`, `m
 `make down` и `make restart` также управляют им.
 Inference-service предоставляет gRPC API в Docker-сети
 по адресу `inference-service:9091`, с хоста — `localhost:9091`. Проверка состояния — через `grpc.health.v1.Health`.
+
+Тесты inference-service охватывают gRPC-обработчик, операции и пагинацию
+deployment, репозиторий с моком БД и PostgreSQL, Docker runtime, менеджер
+состояний и маршрутов, а также сборщики метрик. Подробный состав проверок,
+способы запуска и отчёты описаны в [TESTING.md](TESTING.md).
 
 ### Линтеры и форматирование
 
@@ -102,11 +110,21 @@ prek run --stage manual go-vet-inference-service --all-files
 NGINX доступен на `http://localhost:8000` (порт задаётся `NGINX_HTTP_PORT` в `infra/.env`).
 Он направляет `/api/v1/projects/{project}/models...` и `/api/v1/projects/{project}/deployments...` в model-service, а остальные `/api/v1/...` — в user-service. Авторизацию выполняют сами сервисы. Общий Swagger UI с переключением двух схем доступен на `/api/v1/docs`; схема user-service — `/api/v1/openapi-user.json`, model-service — `/api/v1/openapi-model.json`. Модельные API и UI доступны без JWT по `/inference/{project}/{deployment}/`; потоковые ответы не буферизуются.
 
+Отдельное зеркало model-service доступно на `/mirror/`. Настройка маршрутов,
+primary–replica PostgreSQL и проверка репликации описаны в [документации зеркала](docs/mirror-model-service.md).
+
 Служебные страницы: `/management` содержит ссылки, `/status` показывает страницу со статистикой NGINX (исходные данные stub_status — `/status/data`), `/health` проверяет процесс NGINX, `/ready` возвращает JSON с готовностью user-service и model-service и HTTP-доступностью inference-service: первые два сервиса проверяют базу, а model-service также проверяет gRPC inference-service. Эти данные выводятся на странице `/status`. `/documentation` отображает этот README, его исходный Markdown доступен на `/documentation/raw`, `/` и `/reserved/` — приветственную страницу. На `/legacy` доступны бинарные файлы Linux-утилиты bootstrap-admin для архитектур amd64 и arm64; они собираются вместе с образом NGINX. Это утилита первоначального создания администратора, работающая напрямую с PostgreSQL, а не клиент API.
 
 Администрирование PostgreSQL через Adminer: `http://127.0.0.1:8083/admin/` на компьютере с сервером. Публичный `/admin` возвращает 403; Adminer не имеет собственного опубликованного порта. В форме выберите PostgreSQL и сервер `postgres`; имя БД, пользователь и пароль заданы в `infra/.env` (`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`). Доступ к 8083 ограничен loopback на уровне Docker; для удалённого администрирования используйте SSH-туннель, например `ssh -L 8083:127.0.0.1:8083 user@server`. PostgreSQL также публикуется только на `127.0.0.1:5432`.
 
 Локальный запуск: `make up` из корня репозитория. HTTP-порты сервисов не публикуются на хосте; доступ осуществляется через NGINX. Swagger UI версии 5.34.1 и его ресурсы размещены локально в `nginx/static/swagger`.
+
+NGINX устанавливает заголовок ответа `Server: Inference Platform`. Проверить его можно командой `curl -I http://localhost:8000/`.
+
+Публичные CSS, JavaScript, изображения и шрифты в `/static/` и `/mirror/static/`
+кэшируются на час; ошибки и остальные страницы и API получают `Cache-Control: no-store`.
+Текстовые ответы при поддержке клиентом сжимаются gzip; потоковый `/inference/`
+не сжимается.
 
 Примеры: `POST /api/v1/auth/register`, `POST /api/v1/auth/login`,
 `PATCH /api/v1/users/{id}`, `GET /api/v1/projects/{project}/models`.
@@ -177,22 +195,37 @@ ID и даты создаются сервером. Роль относится 
 Inference-service использует gRPC-контракт `inference.v1.InferenceService`.
 Путь RPC: `/inference.v1.InferenceService/StartDeployment` (аналогично для остальных методов).
 Версия gRPC задаётся protobuf-пакетом `inference.v1`; префикс `/api/v1` относится к HTTP API.
+Реализованы `StartDeployment`, `StopDeployment`, `GetDeploymentByID`,
+`GetDeploymentByName`, `ListDeployments` и `ListAllDeployments`. Последние два
+метода возвращают соответственно текущие развёртывания и историю запусков;
+для постраничного чтения используются `offset`, `limit` и `next_page_token`.
 
 Контракт развёртываний в model-service:
 
 | Метод и путь | Назначение | Успешный ответ по контракту |
 | --- | --- | --- |
-| `POST /api/v1/projects/{project}/models/{model_id}/deployment` | Создать развёртывание и запустить модель с текущим spec; без тела запроса | `201`, состояние и `Location` |
+| `POST /api/v1/projects/{project}/models/{model_id}/deployment` | Запустить модель; обязательный заголовок `Idempotency-Key`, без тела | `202`, состояние и `Location` |
 | `GET /api/v1/projects/{project}/models/{model_id}/deployment` | Получить состояние развёртывания | `200` |
-| `DELETE /api/v1/projects/{project}/models/{model_id}/deployment` | Остановить развёртывание и освободить ресурсы, сохранив запись модели | `204`, без тела |
+| `DELETE /api/v1/projects/{project}/models/{model_id}/deployment` | Остановить развёртывание, сохранив запись модели | `202` при принятой остановке, `204` если уже остановлено или отсутствует |
 | `GET /api/v1/projects/{project}/deployments?offset=0&limit=20` | Получить страницу развёртываний проекта | `200`, `deployments` и `nextpagetoken` |
 
-Все четыре ручки пока являются заглушками и возвращают `501 Not Implemented`.
-Прежние HTTP-ручки `/start` и `/stop` удалены. По контракту у модели одно развёртывание,
-повторное создание возвращает `409`, повторный DELETE отсутствующего развёртывания
-существующей модели — `204`. Состояния: `starting`, `running`, `stopping`, `failed`.
+При повторе создания используйте тот же `Idempotency-Key`: ответ успешной
+операции сохраняется в primary PostgreSQL и возвращается любой репликой или
+зеркалом. Ключ принадлежит пользователю; повторное использование для другого
+проекта или модели возвращает `409`. Для нового запуска после остановки нужен
+новый ключ. Если процесс прервался и результат операции неизвестен, сервер
+возвращает `503` и не запускает её повторно: требуется проверить состояние
+deployment вручную. Результаты хранятся без автоматического удаления. Запросы
+без ключа не принимаются. Прежние HTTP-ручки `/start` и `/stop` удалены.
+Повторный DELETE отсутствующего развёртывания существующей модели — `204`.
+Состояния: `starting`, `running`, `stopping`, `failed`.
 `nextpagetoken` — следующий числовой offset либо `null` на последней странице.
-Внутренние gRPC `StartDeployment` и `StopDeployment` реализованы в inference-service.
+При запуске inference-service проверяет наличие активного развёртывания модели
+в проекте, создаёт Docker-контейнер, сохраняет deployment в PostgreSQL и
+запускает контейнер. Если запись не сохранилась, созданный контейнер удаляется.
+Менеджер сверяет состояния с Docker, обрабатывает события контейнеров и
+поддерживает маршруты прокси к запущенным моделям. Сервис также собирает
+метрики развёртываний и ограничений ресурсов контейнеров.
 
 Внутренний gRPC-адрес задаётся через `INFERENCE_GRPC_ADDR` (`localhost:9091`
 по умолчанию; в Compose — `inference-service:9091`). Значение `REQUEST_TIMEOUT`

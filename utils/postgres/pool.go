@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jur4ikoff/utils/telemetry"
 )
 
 // NewPool creates a connection pool. The first query establishes a connection.
@@ -13,6 +14,7 @@ func NewPool(ctx context.Context, databaseURL string, maxConns, minConns int32) 
 	if err != nil {
 		return nil, fmt.Errorf("parse PostgreSQL configuration: %w", err)
 	}
+	cfg.ConnConfig.Tracer = telemetry.QueryTracer{}
 	cfg.MaxConns = maxConns
 	cfg.MinConns = minConns
 

@@ -22,7 +22,7 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// Техника: классы эквивалентности маршрутов, host и origin.
+// Техника: разбиение на классы эквивалентности маршрутов, host и origin.
 func TestProxyDeploymentPaths(t *testing.T) {
 	proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://localhost:8082"})
 	if err != nil {
@@ -63,15 +63,9 @@ func TestProxyDeploymentPaths(t *testing.T) {
 			t.Errorf("%s: status=%d body=%s", tc.path, w.Code, w.Body.String())
 		}
 	}
-	proxy.Remove(first.ID)
-	w := httptest.NewRecorder()
-	proxy.ServeHTTP(w, httptest.NewRequest("GET", "http://localhost:8082/ml/qwen/", nil))
-	if w.Code != 404 {
-		t.Fatal("removed route still active")
-	}
 }
 
-// Техника: класс HTML-ответа с ресурсами.
+// Техника: разбиение на классы эквивалентности; случай HTML-ответа с ресурсами.
 func TestPrepareUIResponse(t *testing.T) {
 	body := `<html><head><script src="/assets/app.js"></script></head><body></body></html>`
 	response := &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}
@@ -87,13 +81,17 @@ func TestPrepareUIResponse(t *testing.T) {
 	}
 }
 
-// Техника: классы эквивалентности публичных адресов.
-func TestProxyPublicURL(t *testing.T) {
+// Техника: разбиение на классы эквивалентности и анализ граничных значений некорректных адресов.
+func TestProxyRejectsInvalidPublicURL(t *testing.T) {
 	for _, address := range []string{"", "http://localhost:0", "http://localhost:65536", "http://localhost/path", "https://user:password@models.example.com", "http://localhost?x=y", "http://localhost?", "ftp://localhost", "http://bad_host", "http://-bad.localhost"} {
 		if _, err := NewProxyManager(config.ProxyConfig{PublicURL: address}); err == nil {
 			t.Errorf("accepted %q", address)
 		}
 	}
+}
+
+// Техника: разбиение на классы эквивалентности корректных адресов.
+func TestProxyAcceptsValidPublicURL(t *testing.T) {
 	for _, address := range []string{"http://127.0.0.1:8082", "https://models.example.com:443/"} {
 		if _, err := NewProxyManager(config.ProxyConfig{PublicURL: address}); err != nil {
 			t.Errorf("rejected %q: %v", address, err)
@@ -101,7 +99,7 @@ func TestProxyPublicURL(t *testing.T) {
 	}
 }
 
-// Техника: класс сжатого HTML-ответа.
+// Техника: разбиение на классы эквивалентности; случай сжатого HTML-ответа.
 func TestProxyDecompressesGzipUI(t *testing.T) {
 	proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://localhost:8082"})
 	if err != nil {
@@ -143,7 +141,7 @@ func TestProxyDecompressesGzipUI(t *testing.T) {
 	}
 }
 
-// Техника: классы эквивалентности разрешённых и запрещённых хостов.
+// Техника: разбиение на классы эквивалентности разрешённых и запрещённых хостов.
 func TestProxyAllowsConfiguredAndLocalHosts(t *testing.T) {
 	proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://192.168.50.139:8082"})
 	if err != nil {
@@ -178,72 +176,81 @@ func TestProxyAllowsConfiguredAndLocalHosts(t *testing.T) {
 	}
 }
 
-// Техника: классы эквивалентности корректного и некорректного endpoint.
-func TestProxyUpsertValidation(t *testing.T) {
-	for _, tc := range []struct {
-		name, endpoint string
-		wantErr        bool
-	}{{"valid", "http://model:8080", false}, {"invalid", "file:///secret", true}} {
-		t.Run(tc.name, func(t *testing.T) {
-			proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://localhost:8082"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			state := domain.DeploymentState{ID: uuid.New(), Project: "demo", DeploymentName: "model"}
-			err = proxy.Upsert(state, tc.endpoint)
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("err=%v", err)
-			}
-		})
+func proxyWithRoute(t *testing.T) (*ProxyManager, domain.DeploymentState) {
+	t.Helper()
+	proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://localhost:8082"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := domain.DeploymentState{ID: uuid.New(), Project: "demo", DeploymentName: "model"}
+	if err := proxy.Upsert(state, "http://model:8080"); err != nil {
+		t.Fatal(err)
+	}
+	return proxy, state
+}
+
+// Техника: разбиение на классы эквивалентности; случай корректного endpoint.
+func TestProxyUpsertAcceptsHTTPEndpoint(t *testing.T) {
+	proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://localhost:8082"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := domain.DeploymentState{ID: uuid.New(), Project: "demo", DeploymentName: "model"}
+	if err := proxy.Upsert(state, "http://model:8080"); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := proxy.keys[state.ID]; !exists {
+		t.Fatal("route was not registered")
 	}
 }
 
-// Техника: классы эквивалентности сохранённого и отсутствующего deployment.
-func TestProxyPrune(t *testing.T) {
-	for _, keep := range []bool{true, false} {
-		t.Run(map[bool]string{true: "known", false: "missing"}[keep], func(t *testing.T) {
-			proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://localhost:8082"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			state := domain.DeploymentState{ID: uuid.New(), Project: "demo", DeploymentName: "model"}
-			if err = proxy.Upsert(state, "http://model:8080"); err != nil {
-				t.Fatal(err)
-			}
-			var states []domain.DeploymentState
-			if keep {
-				states = []domain.DeploymentState{state}
-			}
-			proxy.Prune(states)
-			_, exists := proxy.keys[state.ID]
-			if exists != keep {
-				t.Fatalf("exists=%v want=%v", exists, keep)
-			}
-		})
+// Техника: разбиение на классы эквивалентности; случай endpoint с неподдерживаемой схемой.
+func TestProxyUpsertRejectsInvalidEndpoint(t *testing.T) {
+	proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://localhost:8082"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := domain.DeploymentState{ID: uuid.New(), Project: "demo", DeploymentName: "model"}
+	if err := proxy.Upsert(state, "file:///secret"); err == nil {
+		t.Fatal("invalid endpoint accepted")
+	}
+	if _, exists := proxy.keys[state.ID]; exists {
+		t.Fatal("invalid route was registered")
 	}
 }
 
-// Техника: классы эквивалентности существующего и отсутствующего ключа.
-func TestProxyRemove(t *testing.T) {
-	for _, existing := range []bool{true, false} {
-		t.Run(map[bool]string{true: "existing", false: "missing"}[existing], func(t *testing.T) {
-			proxy, err := NewProxyManager(config.ProxyConfig{PublicURL: "http://localhost:8082"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			state := domain.DeploymentState{ID: uuid.New(), Project: "demo", DeploymentName: "model"}
-			if err = proxy.Upsert(state, "http://model:8080"); err != nil {
-				t.Fatal(err)
-			}
-			id := uuid.New()
-			if existing {
-				id = state.ID
-			}
-			proxy.Remove(id)
-			_, exists := proxy.keys[state.ID]
-			if exists == existing {
-				t.Fatalf("exists=%v existing=%v", exists, existing)
-			}
-		})
+// Техника: разбиение на классы эквивалентности; случай deployment, присутствующего в актуальном списке.
+func TestProxyPruneKeepsKnownDeployment(t *testing.T) {
+	proxy, state := proxyWithRoute(t)
+	proxy.Prune([]domain.DeploymentState{state})
+	if _, exists := proxy.keys[state.ID]; !exists {
+		t.Fatal("known route was removed")
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай deployment, отсутствующего в актуальном списке.
+func TestProxyPruneRemovesMissingDeployment(t *testing.T) {
+	proxy, state := proxyWithRoute(t)
+	proxy.Prune(nil)
+	if _, exists := proxy.keys[state.ID]; exists {
+		t.Fatal("missing route was retained")
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай существующего ключа.
+func TestProxyRemoveDeletesExistingRoute(t *testing.T) {
+	proxy, state := proxyWithRoute(t)
+	proxy.Remove(state.ID)
+	if _, exists := proxy.keys[state.ID]; exists {
+		t.Fatal("route was retained")
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай отсутствующего ключа.
+func TestProxyRemoveIgnoresUnknownID(t *testing.T) {
+	proxy, state := proxyWithRoute(t)
+	proxy.Remove(uuid.New())
+	if _, exists := proxy.keys[state.ID]; !exists {
+		t.Fatal("unrelated route was removed")
 	}
 }

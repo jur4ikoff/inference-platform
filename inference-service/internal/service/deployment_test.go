@@ -3,15 +3,18 @@ package service_test
 import (
 	"context"
 	"errors"
+	"reflect"
+	"strings"
+	"testing"
+
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	"github.com/jur4ikoff/inference-service/internal/config"
 	"github.com/jur4ikoff/inference-service/internal/domain"
 	"github.com/jur4ikoff/inference-service/internal/service"
 	"github.com/jur4ikoff/inference-service/internal/testutil"
-	"reflect"
-	"strings"
-	"testing"
+
+	"go.uber.org/mock/gomock"
 )
 
 func deploymentCommand() service.StartDeploymentCommand {
@@ -26,27 +29,28 @@ func deploymentCommand() service.StartDeploymentCommand {
 	}
 }
 
-// Техника: класс успешного создания.
+// Техника: разбиение на классы эквивалентности; случай успешного создания.
 func TestStartDeploymentSavesCreatedDeployment(t *testing.T) {
 	command := deploymentCommand()
-	runtime := &deploymentRuntime{}
-	repo := &deploymentRepository{}
-	runtime.beforeCreate = func() {
-		if !repo.checked || repo.checkedProject != command.Project || repo.checkedModelID != command.ModelID {
-			t.Fatal("deployment must be checked by project and model ID before calling Docker")
-		}
-	}
-	runtime.beforeStart = func() {
-		if repo.calls != 1 || repo.saved.ContainerID != "docker-id" {
-			t.Fatal("deployment must be saved before starting its Docker container")
-		}
-	}
-	repo.create = func(_ context.Context, deployment domain.Deployment) (domain.Deployment, error) {
-		if !runtime.created {
-			t.Fatal("database was written before the Docker container was created")
-		}
-		return deployment, nil
-	}
+	ctrl := gomock.NewController(t)
+	repo := NewMockDeploymentRepository(ctrl)
+	runtime := NewMockRuntimeClient(ctrl)
+	var containerName string
+	var saved domain.Deployment
+	gomock.InOrder(
+		repo.EXPECT().ActiveDeploymentExists(gomock.Any(), command.Project, command.ModelID).Return(false, nil),
+		runtime.EXPECT().CreateContainer(gomock.Any(), "llama:server", gomock.Any(), command.Spec).
+			DoAndReturn(func(_ context.Context, _ string, name string, _ domain.DeploymentSpec) (string, error) {
+				containerName = name
+				return "docker-id", nil
+			}),
+		repo.EXPECT().CreateDeployment(gomock.Any(), gomock.Any()).
+			DoAndReturn(func(_ context.Context, deployment domain.Deployment) (domain.Deployment, error) {
+				saved = deployment
+				return deployment, nil
+			}),
+		runtime.EXPECT().StartContainer(gomock.Any(), "docker-id").Return(nil),
+	)
 	svc := service.NewDeploymentService(repo, config.ServiceConfig{InferenceServerImage: "llama:server"}, runtime)
 	deployment, err := svc.StartDeployment(context.Background(), command)
 	if err != nil {
@@ -55,21 +59,15 @@ func TestStartDeploymentSavesCreatedDeployment(t *testing.T) {
 	if deployment.ID == uuid.Nil || deployment.ContainerID != "docker-id" || deployment.ModelID != command.ModelID || deployment.Project != command.Project || deployment.Username != command.Username || deployment.Status != domain.StatusPending {
 		t.Fatalf("incorrect deployment: %+v", deployment)
 	}
-	if !reflect.DeepEqual(deployment.Spec, command.Spec) || !reflect.DeepEqual(repo.saved, deployment) || repo.calls != 1 {
-		t.Fatalf("saved deployment differs from the returned result: %+v", repo.saved)
+	if !reflect.DeepEqual(deployment.Spec, command.Spec) || !reflect.DeepEqual(saved, deployment) {
+		t.Fatalf("saved deployment differs from the returned result: %+v", saved)
 	}
-	if deployment.Name != runtime.name || !strings.HasPrefix(deployment.Name, command.DeploymentName+"-") || runtime.image != "llama:server" {
+	if deployment.Name != containerName || !strings.HasPrefix(deployment.Name, command.DeploymentName+"-") {
 		t.Fatal("Docker and database have different deployment details")
-	}
-	if runtime.removedID != "" {
-		t.Fatal("a successfully saved container was removed")
-	}
-	if runtime.startedID != deployment.ContainerID {
-		t.Fatal("the saved deployment container was not started")
 	}
 }
 
-// Техника: класс существующего активного запуска.
+// Техника: разбиение на классы эквивалентности; случай существующего активного запуска.
 func TestStartDeploymentRejectsExistingDeploymentBeforeDocker(t *testing.T) {
 	runtime := &deploymentRuntime{}
 	repo := &deploymentRepository{exists: true}
@@ -82,22 +80,30 @@ func TestStartDeploymentRejectsExistingDeploymentBeforeDocker(t *testing.T) {
 	}
 }
 
-// Техника: классы эквивалентности ошибок проверки БД.
+// Техника: разбиение на классы эквивалентности ошибок проверки БД.
 func TestStartDeploymentStopsWhenDeploymentCheckFails(t *testing.T) {
-	for _, failure := range []error{errors.New("database unavailable"), context.Canceled} {
-		repo := &deploymentRepository{existsErr: failure}
-		runtime := &deploymentRuntime{}
-		svc := service.NewDeploymentService(repo, config.ServiceConfig{}, runtime)
-		if _, err := svc.StartDeployment(context.Background(), deploymentCommand()); !errors.Is(err, failure) {
-			t.Fatalf("expected existence check failure, got %v", err)
-		}
-		if runtime.created || repo.calls != 0 {
-			t.Fatal("failed existence check must stop creation")
-		}
+	for _, tc := range []struct {
+		name    string
+		failure error
+	}{
+		{"database unavailable", errors.New("database unavailable")},
+		{"context canceled", context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &deploymentRepository{existsErr: tc.failure}
+			runtime := &deploymentRuntime{}
+			svc := service.NewDeploymentService(repo, config.ServiceConfig{}, runtime)
+			if _, err := svc.StartDeployment(t.Context(), deploymentCommand()); !errors.Is(err, tc.failure) {
+				t.Fatalf("expected existence check failure, got %v", err)
+			}
+			if runtime.created || repo.calls != 0 {
+				t.Fatal("failed existence check must stop creation")
+			}
+		})
 	}
 }
 
-// Техника: переходы состояний при конкурентном конфликте.
+// Техника: тестирование переходов состояний при конкурентном конфликте.
 func TestStartDeploymentRemovesNewContainerAfterConcurrentDuplicate(t *testing.T) {
 	repo := &deploymentRepository{create: func(context.Context, domain.Deployment) (domain.Deployment, error) {
 		return domain.Deployment{}, domain.ErrDeploymentAlreadyExists
@@ -112,7 +118,7 @@ func TestStartDeploymentRemovesNewContainerAfterConcurrentDuplicate(t *testing.T
 	}
 }
 
-// Техника: класс успешно сохранённой записи.
+// Техника: разбиение на классы эквивалентности; случай успешно сохранённой записи.
 func TestStartDeploymentReturnsDeploymentFromRepository(t *testing.T) {
 	var expected domain.Deployment
 	repo := &deploymentRepository{create: func(_ context.Context, deployment domain.Deployment) (domain.Deployment, error) {
@@ -130,7 +136,7 @@ func TestStartDeploymentReturnsDeploymentFromRepository(t *testing.T) {
 	}
 }
 
-// Техника: класс ошибки создания контейнера.
+// Техника: разбиение на классы эквивалентности; случай ошибки создания контейнера.
 func TestStartDeploymentDoesNotSaveFailedContainer(t *testing.T) {
 	failure := errors.New("Docker unavailable")
 	runtime := &deploymentRuntime{createErr: failure}
@@ -144,14 +150,21 @@ func TestStartDeploymentDoesNotSaveFailedContainer(t *testing.T) {
 	}
 }
 
-// Техника: классы эквивалентности ошибок сохранения и очистки.
+// Техника: разбиение на классы эквивалентности ошибок сохранения и очистки.
 func TestStartDeploymentRemovesContainerWhenPersistenceFails(t *testing.T) {
 	failure := errors.New("database write failed")
-	for _, cleanupFailure := range []error{nil, errdefs.ErrNotFound, errors.New("Docker remove failed")} {
-		t.Run("cleanup", func(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		cleanupFailure error
+	}{
+		{"cleanup succeeds", nil},
+		{"container already absent", errdefs.ErrNotFound},
+		{"cleanup fails", errors.New("Docker remove failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			runtime := &deploymentRuntime{removeErr: cleanupFailure}
+			runtime := &deploymentRuntime{removeErr: tc.cleanupFailure}
 			repo := &deploymentRepository{create: func(context.Context, domain.Deployment) (domain.Deployment, error) {
 				cancel()
 				return domain.Deployment{}, failure
@@ -164,14 +177,14 @@ func TestStartDeploymentRemovesContainerWhenPersistenceFails(t *testing.T) {
 			if runtime.removedID != "docker-id" || runtime.cleanupCanceled || !runtime.cleanupHasDeadline {
 				t.Fatal("cleanup must remove the new container with a separate, bounded context")
 			}
-			if cleanupFailure != nil && !errdefs.IsNotFound(cleanupFailure) && !errors.Is(err, cleanupFailure) {
+			if tc.cleanupFailure != nil && !errdefs.IsNotFound(tc.cleanupFailure) && !errors.Is(err, tc.cleanupFailure) {
 				t.Fatalf("cleanup error was lost: %v", err)
 			}
 		})
 	}
 }
 
-// Техника: класс отсутствующей зависимости БД.
+// Техника: разбиение на классы эквивалентности; случай отсутствующей зависимости БД.
 func TestStartDeploymentRequiresDatabaseBeforeCreatingContainer(t *testing.T) {
 	runtime := &deploymentRuntime{}
 	svc := service.NewDeploymentService(nil, config.ServiceConfig{}, runtime)
@@ -246,57 +259,96 @@ func (r *deploymentRuntime) RemoveContainer(ctx context.Context, id string) erro
 	return r.removeErr
 }
 
-// Техника: классы эквивалентности результата зависимости и границы входных данных.
-func TestDeploymentUseCases(t *testing.T) {
-	for _, method := range []string{"init", "get id", "get name", "stop"} {
-		for _, valid := range []bool{true, false} {
-			t.Run(method+map[bool]string{true: "/valid", false: "/invalid"}[valid], func(t *testing.T) {
-				d := testutil.DeploymentMother{}.Running()
-				failure := errors.New("runtime unavailable")
-				repo := &testutil.MockDeploymentRepository{GetDeploymentByIDFunc: func(context.Context, uuid.UUID) (domain.Deployment, error) { return d, nil }, GetDeploymentByNameFunc: func(context.Context, string) (domain.Deployment, error) { return d, nil }}
-				rt := &testutil.MockRuntimeClient{EnsureImageFunc: func(context.Context, string) error {
-					if !valid {
-						return failure
-					}
-					return nil
-				}, StopContainerFunc: func(context.Context, string) error {
-					if !valid {
-						return failure
-					}
-					return nil
-				}}
-				svc := service.NewDeploymentService(repo, config.ServiceConfig{}, rt)
-				var err, want error
-				switch method {
-				case "init":
-					err = svc.Init(context.Background())
-					if !valid {
-						want = failure
-					}
-				case "get id":
-					id := d.ID
-					if !valid {
-						id = uuid.Nil
-						want = domain.ErrInvalidDeploymentID
-					}
-					_, err = svc.GetDeploymentByID(context.Background(), id)
-				case "get name":
-					name := "demo"
-					if !valid {
-						name = ""
-						want = domain.ErrInvalidDeploymentName
-					}
-					_, err = svc.GetDeploymentByName(context.Background(), name)
-				case "stop":
-					err = svc.StopDeployment(context.Background(), d.ID)
-					if !valid {
-						want = failure
-					}
-				}
-				if !errors.Is(err, want) {
-					t.Fatalf("err=%v want=%v", err, want)
-				}
-			})
-		}
+// Техника: разбиение на классы эквивалентности; случай успешного ответа runtime.
+func TestDeploymentInitEnsuresImage(t *testing.T) {
+	rt := NewMockRuntimeClient(gomock.NewController(t))
+	rt.EXPECT().EnsureImage(gomock.Any(), "llama:server").Return(nil)
+	svc := service.NewDeploymentService(nil, config.ServiceConfig{InferenceServerImage: "llama:server"}, rt)
+	if err := svc.Init(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай ошибки runtime.
+func TestDeploymentInitReportsRuntimeError(t *testing.T) {
+	failure := errors.New("runtime unavailable")
+	rt := NewMockRuntimeClient(gomock.NewController(t))
+	rt.EXPECT().EnsureImage(gomock.Any(), "llama:server").Return(failure)
+	svc := service.NewDeploymentService(nil, config.ServiceConfig{InferenceServerImage: "llama:server"}, rt)
+	if err := svc.Init(t.Context()); !errors.Is(err, failure) {
+		t.Fatalf("err=%v want=%v", err, failure)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай найденного deployment.
+func TestGetDeploymentByIDReturnsDeployment(t *testing.T) {
+	d := testutil.DeploymentMother{}.Running()
+	repo := NewMockDeploymentRepository(gomock.NewController(t))
+	repo.EXPECT().GetDeploymentByID(gomock.Any(), d.ID).Return(d, nil)
+	svc := service.NewDeploymentService(repo, config.ServiceConfig{}, nil)
+	got, err := svc.GetDeploymentByID(t.Context(), d.ID)
+	if err != nil || !reflect.DeepEqual(got, d) {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай нулевого UUID.
+func TestGetDeploymentByIDRejectsEmptyID(t *testing.T) {
+	repo := NewMockDeploymentRepository(gomock.NewController(t))
+	svc := service.NewDeploymentService(repo, config.ServiceConfig{}, nil)
+	_, err := svc.GetDeploymentByID(t.Context(), uuid.Nil)
+	if !errors.Is(err, domain.ErrInvalidDeploymentID) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай найденного deployment.
+func TestGetDeploymentByNameReturnsDeployment(t *testing.T) {
+	d := testutil.DeploymentMother{}.Running()
+	repo := NewMockDeploymentRepository(gomock.NewController(t))
+	repo.EXPECT().GetDeploymentByName(gomock.Any(), d.Name).Return(d, nil)
+	svc := service.NewDeploymentService(repo, config.ServiceConfig{}, nil)
+	got, err := svc.GetDeploymentByName(t.Context(), d.Name)
+	if err != nil || !reflect.DeepEqual(got, d) {
+		t.Fatalf("got=%+v err=%v", got, err)
+	}
+}
+
+// Техника: анализ граничных значений; пустого имени.
+func TestGetDeploymentByNameRejectsEmptyName(t *testing.T) {
+	repo := NewMockDeploymentRepository(gomock.NewController(t))
+	svc := service.NewDeploymentService(repo, config.ServiceConfig{}, nil)
+	_, err := svc.GetDeploymentByName(t.Context(), " ")
+	if !errors.Is(err, domain.ErrInvalidDeploymentName) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай успешной остановки контейнера.
+func TestStopDeploymentStopsContainer(t *testing.T) {
+	d := testutil.DeploymentMother{}.Running()
+	ctrl := gomock.NewController(t)
+	repo := NewMockDeploymentRepository(ctrl)
+	rt := NewMockRuntimeClient(ctrl)
+	repo.EXPECT().GetDeploymentByID(gomock.Any(), d.ID).Return(d, nil)
+	rt.EXPECT().StopContainer(gomock.Any(), d.ContainerID).Return(nil)
+	svc := service.NewDeploymentService(repo, config.ServiceConfig{}, rt)
+	if err := svc.StopDeployment(t.Context(), d.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Техника: разбиение на классы эквивалентности; случай ошибки остановки контейнера.
+func TestStopDeploymentReportsRuntimeError(t *testing.T) {
+	d := testutil.DeploymentMother{}.Running()
+	failure := errors.New("runtime unavailable")
+	ctrl := gomock.NewController(t)
+	repo := NewMockDeploymentRepository(ctrl)
+	rt := NewMockRuntimeClient(ctrl)
+	repo.EXPECT().GetDeploymentByID(gomock.Any(), d.ID).Return(d, nil)
+	rt.EXPECT().StopContainer(gomock.Any(), d.ContainerID).Return(failure)
+	svc := service.NewDeploymentService(repo, config.ServiceConfig{}, rt)
+	if err := svc.StopDeployment(t.Context(), d.ID); !errors.Is(err, failure) {
+		t.Fatalf("err=%v want=%v", err, failure)
 	}
 }

@@ -1,5 +1,7 @@
 package service
 
+//go:generate go run go.uber.org/mock/mockgen@v0.6.0 -source=deployment.go -destination=deployment_mock_test.go -package=service_test -mock_names=DeploymentRepository=MockDeploymentRepository,RuntimeClient=MockRuntimeClient
+
 import (
 	"context"
 	"errors"
@@ -47,7 +49,14 @@ func NewDeploymentService(repo DeploymentRepository, cfg config.ServiceConfig, r
 	}
 }
 
-func (s *DeploymentService) Init(ctx context.Context) error {
+func (s *DeploymentService) Init(ctx context.Context) (resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "DeploymentService").Msg("Init failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "DeploymentService").Msg("Init completed")
+	}()
 	if err := s.runtime.EnsureImage(ctx, s.config.InferenceServerImage); err != nil {
 		return fmt.Errorf("ensure inference server image: %w", err)
 	}
@@ -62,7 +71,14 @@ type StartDeploymentCommand struct {
 	Spec           domain.DeploymentSpec
 }
 
-func (s *DeploymentService) StartDeployment(ctx context.Context, command StartDeploymentCommand) (domain.Deployment, error) {
+func (s *DeploymentService) StartDeployment(ctx context.Context, command StartDeploymentCommand) (_ domain.Deployment, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "DeploymentService").Msg("StartDeployment failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "DeploymentService").Msg("StartDeployment completed")
+	}()
 	if s.repo == nil {
 		return domain.Deployment{}, domain.ErrDatabaseUnavailable
 	}
@@ -122,7 +138,14 @@ func (s *DeploymentService) StartDeployment(ctx context.Context, command StartDe
 	return savedDeployment, nil
 }
 
-func (s *DeploymentService) GetDeploymentByID(ctx context.Context, id uuid.UUID) (domain.Deployment, error) {
+func (s *DeploymentService) GetDeploymentByID(ctx context.Context, id uuid.UUID) (_ domain.Deployment, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "DeploymentService").Msg("GetDeploymentByID failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "DeploymentService").Msg("GetDeploymentByID completed")
+	}()
 	if id == uuid.Nil {
 		return domain.Deployment{}, domain.ErrInvalidDeploymentID
 	}
@@ -132,7 +155,14 @@ func (s *DeploymentService) GetDeploymentByID(ctx context.Context, id uuid.UUID)
 	return s.repo.GetDeploymentByID(ctx, id)
 }
 
-func (s *DeploymentService) GetDeploymentByName(ctx context.Context, name string) (domain.Deployment, error) {
+func (s *DeploymentService) GetDeploymentByName(ctx context.Context, name string) (_ domain.Deployment, resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "DeploymentService").Msg("GetDeploymentByName failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "DeploymentService").Msg("GetDeploymentByName completed")
+	}()
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return domain.Deployment{}, domain.ErrInvalidDeploymentName
@@ -143,7 +173,14 @@ func (s *DeploymentService) GetDeploymentByName(ctx context.Context, name string
 	return s.repo.GetDeploymentByName(ctx, name)
 }
 
-func (s *DeploymentService) StopDeployment(ctx context.Context, id uuid.UUID) error {
+func (s *DeploymentService) StopDeployment(ctx context.Context, id uuid.UUID) (resultErr error) {
+	defer func() {
+		if resultErr != nil {
+			log.Ctx(ctx).Error().Err(resultErr).Str("component", "DeploymentService").Msg("StopDeployment failed")
+			return
+		}
+		log.Ctx(ctx).Info().Str("component", "DeploymentService").Msg("StopDeployment completed")
+	}()
 	deployment, err := s.GetDeploymentByID(ctx, id)
 	if err != nil {
 		return fmt.Errorf("get deployment to stop: %w", err)
