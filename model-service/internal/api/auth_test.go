@@ -28,7 +28,6 @@ func (s authVerifierStub) Verify(context.Context, string) (auth.Principal, error
 // Техника: классы эквивалентности проектных разрешений.
 func TestModelRoutesRequireAuthorizedProjectGrant(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		model := &modelStub{}
 		router := NewHandler(model, authVerifierStub{principal: auth.Principal{
 			Subject:  "0197eb5a-37c6-7e48-8cd6-0c19edcd72f1",
@@ -48,27 +47,22 @@ func TestModelRoutesRequireAuthorizedProjectGrant(t *testing.T) {
 		if model.created.Username != "alice" {
 			allureCtx.Fatalf("model creator came from request instead of JWT: %q", model.created.Username)
 		}
-
 	})
 }
 
 // Техника: класс недоступной зависимости проверки JWT.
 func TestUnavailableJWTVerifierReturnsServiceUnavailable(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		router := NewHandler(&modelStub{}, authVerifierStub{err: auth.ErrUnavailable}).Router()
 		apiRequestWithAuth(allureCtx, router, http.MethodGet, "/api/v1/projects/project-1/models", "", "Bearer access-token", http.StatusServiceUnavailable)
-
 	})
 }
 
 // Техника: класс невалидного токена.
 func TestInvalidJWTReturnsUnauthorized(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		router := NewHandler(&modelStub{}, authVerifierStub{err: errors.New("bad signature")}).Router()
 		apiRequestWithAuth(allureCtx, router, http.MethodGet, "/api/v1/projects/project-1/models", "", "Bearer access-token", http.StatusUnauthorized)
-
 	})
 }
 
@@ -87,7 +81,6 @@ func apiRequestWithAuth(t *allure.Context, router http.Handler, method, path, bo
 // Техника: классы эквивалентности проектных разрешений.
 func TestDeploymentsHistoryRequiresProjectReadPermission(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		fake := &modelStub{deployment: domain.Deployment{ID: "deployment-1", ModelID: "model-1", Project: "demo", Name: "example", Username: "alice", Status: "stopped"}}
 		router := NewHandler(fake, authVerifierStub{principal: auth.Principal{Project: &authjwt.ProjectGrant{Name: "demo", Permissions: authjwt.Permissions{CanReadModel: true}}}}).Router()
 		path := "/api/v1/projects/demo/deployments/history"
@@ -104,14 +97,12 @@ func TestDeploymentsHistoryRequiresProjectReadPermission(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || len(body.Deployments) != 1 || body.Deployments[0].ID != "deployment-1" || body.Deployments[0].Username != "alice" || body.Deployments[0].Status != "stopped" || fake.project != "demo" {
 			allureCtx.Fatalf("unexpected history response: %s; err=%v", response.Body.String(), err)
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности проектных разрешений.
 func TestActiveDeploymentsRequiresProjectReadPermission(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		fake := &modelStub{deployment: domain.Deployment{ID: "deployment-1", Project: "demo", Username: "alice", Status: "running"}}
 		router := NewHandler(fake, authVerifierStub{principal: auth.Principal{Project: &authjwt.ProjectGrant{Name: "demo", Permissions: authjwt.Permissions{CanReadModel: true}}}}).Router()
 		path := "/api/v1/projects/demo/deployments"
@@ -128,14 +119,12 @@ func TestActiveDeploymentsRequiresProjectReadPermission(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || len(body.Deployments) != 1 || body.Deployments[0].ID != "deployment-1" || body.Deployments[0].Username != "alice" || body.Deployments[0].Status != "running" || fake.project != "demo" {
 			allureCtx.Fatalf("unexpected response: %s", response.Body.String())
 		}
-
 	})
 }
 
 // Техника: класс записей с временными метками.
 func TestDeploymentListsIncludeTimestamps(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		started := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 		updated := started.Add(time.Minute)
 		fake := &modelStub{deployment: domain.Deployment{ID: "deployment-1", Project: "demo", Status: "running", StartedAt: &started, UpdatedAt: &updated}}
@@ -152,6 +141,5 @@ func TestDeploymentListsIncludeTimestamps(t *testing.T) {
 				allureCtx.Fatalf("%s: %s", path, response.Body.String())
 			}
 		}
-
 	})
 }

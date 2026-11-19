@@ -45,8 +45,8 @@ help: ## Показать доступные команды
 		'  config              Проверить итоговую Docker Compose-конфигурацию' \
 		'  test                Запустить unit- и интеграционные тесты' \
 		'  test-unit-allure    Запустить unit-тесты и открыть Allure-отчёт' \
-		'  allure-report       Создать Allure-отчёт из последнего JUnit-прогона' \
-		'  allure-open         Открыть Allure-отчёт через локальный HTTP-сервер' \
+		'  allure-report       Создать HTML-отчёт из результатов Allure' \
+		'  allure-open         Открыть результаты последнего прогона в Allure' \
 		'  generate-mocks      Сгенерировать тестовые моки inference-service' \
 		'  test-integration    Запустить интеграционные тесты с PostgreSQL' \
 		'  test-shuffle        Запустить unit-тесты в случайном порядке' \
@@ -169,11 +169,10 @@ generate-mocks: ## Сгенерировать тестовые моки inferenc
 
 test-tools: ## Установить инструменты тестовых отчётов
 	@mkdir -p $(TEST_TOOLS)
-	GOBIN=$(TEST_TOOLS) go install gotest.tools/gotestsum@v1.13.0
 	GOBIN=$(TEST_TOOLS) go install github.com/rillig/gobco@v1.3.4
 	GOBIN=$(TEST_TOOLS) go install github.com/boumenot/gocover-cobertura@v1.5.0
 
-test-unit: ## Запустить unit-тесты и сформировать JUnit-отчёты
+test-unit: ## Запустить unit-тесты с записью результатов Allure
 	./infra/testing/run-go-tests.sh unit
 
 test-db-up: ## Запустить временную тестовую PostgreSQL
@@ -206,19 +205,17 @@ ALLURE_RESULTS ?= unit
 ALLURE_PORT ?= 8090
 .PHONY: allure-report allure-open test-unit-allure
 
-allure-report: ## Создать Allure-отчёт из последнего JUnit-прогона
+allure-report: ## Создать HTML-отчёт из результатов Allure
 	@command -v allure >/dev/null || { echo 'Allure CLI не найден: установите Allure Report 2' >&2; exit 1; }
-	@test -n "$(wildcard test-results/$(ALLURE_RESULTS)/junit/*.xml)" || { echo 'JUnit XML не найден: запустите тесты с gotestsum' >&2; exit 1; }
-	allure generate "test-results/$(ALLURE_RESULTS)/junit" --clean -o "test-results/allure/$(ALLURE_RESULTS)"
+	@test -n "$(firstword $(wildcard test-results/$(ALLURE_RESULTS)/allure-results/*-result.json))" || { echo 'Результаты Allure не найдены: запустите тесты' >&2; exit 1; }
+	allure generate "test-results/$(ALLURE_RESULTS)/allure-results" --clean -o "test-results/allure/$(ALLURE_RESULTS)"
 
-allure-open: ## Открыть готовый Allure-отчёт через локальный HTTP-сервер
+allure-open: ## Открыть результаты последнего прогона в Allure
 	@command -v allure >/dev/null || { echo 'Allure CLI не найден: установите Allure Report 2' >&2; exit 1; }
-	@test -f "test-results/allure/$(ALLURE_RESULTS)/index.html" || { echo 'Отчёт не найден: выполните make allure-report ALLURE_RESULTS=$(ALLURE_RESULTS)' >&2; exit 1; }
-	allure open --host 127.0.0.1 --port $(ALLURE_PORT) "$(CURDIR)/test-results/allure/$(ALLURE_RESULTS)"
+	@test -n "$(firstword $(wildcard test-results/$(ALLURE_RESULTS)/allure-results/*-result.json))" || { echo 'Результаты Allure не найдены: запустите тесты' >&2; exit 1; }
+	allure serve --host 127.0.0.1 --port $(ALLURE_PORT) "$(CURDIR)/test-results/$(ALLURE_RESULTS)/allure-results"
 
 test-unit-allure: ## Запустить unit-тесты, собрать и открыть Allure-отчёт
-	@command -v gotestsum >/dev/null || { echo 'gotestsum не найден: выполните make test-tools' >&2; exit 1; }
 	@command -v allure >/dev/null || { echo 'Allure CLI не найден: установите Allure Report 2' >&2; exit 1; }
 	@status=0; $(MAKE) test-unit || status=$$?; \
-	$(MAKE) allure-report ALLURE_RESULTS=unit || exit $$?; \
 	$(MAKE) allure-open ALLURE_RESULTS=unit || status=1; exit $$status

@@ -3,6 +3,7 @@ module github.com/jur4ikoff/inference-service
 go 1.26.5
 
 require (
+	github.com/allure-framework/allure-go/commons v1.3.1
 	github.com/containerd/errdefs v1.0.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
@@ -21,7 +22,6 @@ require (
 
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/allure-framework/allure-go/commons v1.3.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

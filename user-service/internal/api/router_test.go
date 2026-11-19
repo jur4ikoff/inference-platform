@@ -22,7 +22,6 @@ const testUserID = "0197eb5a-37c6-7e48-8cd6-0c19edcd72f1"
 // Техника: классы эквивалентности авторизованных и анонимных запросов.
 func TestUserRoutesRequireBearerTokenAndAllowOwner(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		fake := &fakeAuth{principal: service.Principal{UserID: testUserID}}
 		router := NewRouter(
 			handler.NewAuthHandler(fake),
@@ -69,7 +68,6 @@ func TestUserRoutesRequireBearerTokenAndAllowOwner(t *testing.T) {
 		if getResponse.Code != http.StatusOK {
 			allureCtx.Fatalf("get user: got status %d, want %d; body: %s", getResponse.Code, http.StatusOK, getResponse.Body.String())
 		}
-
 	})
 }
 
@@ -131,7 +129,6 @@ func (f *fakeAuth) AuthorizeUser(_ context.Context, target domain.UserID) error 
 // Техника: классы эквивалентности результатов проверки токена.
 func TestInternalAuthentication(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, test := range []struct {
 			name, authorization string
 			err                 error
@@ -144,7 +141,6 @@ func TestInternalAuthentication(t *testing.T) {
 		} {
 			t.Run(test.name, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					fake := &fakeAuth{principal: service.Principal{UserID: testUserID}, verifyErr: test.err}
 					router := NewRouter(handler.NewAuthHandler(fake), handler.NewUserHandler(fake), handler.NewProjectHandler(nil), handler.NewRoleHandler(nil), "test")
 					request := httptest.NewRequest(http.MethodGet, "/internal/auth", nil)
@@ -161,18 +157,15 @@ func TestInternalAuthentication(t *testing.T) {
 					} else if response.Header().Get("X-User-ID") != "" || response.Header().Get("X-User-Role") != "" {
 						allureCtx.Fatal("failed authentication returned principal headers")
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: класс удалённого маршрута.
 func TestVerifyRemovedFromPublicAPI(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		fake := &fakeAuth{}
 		router := NewRouter(handler.NewAuthHandler(fake), handler.NewUserHandler(fake), handler.NewProjectHandler(nil), handler.NewRoleHandler(nil), "test")
 		response := httptest.NewRecorder()
@@ -190,7 +183,6 @@ func TestVerifyRemovedFromPublicAPI(t *testing.T) {
 				allureCtx.Errorf("public OpenAPI contains %q", removed)
 			}
 		}
-
 	})
 }
 
@@ -210,7 +202,6 @@ func (f *fakeAuth) DeleteUser(_ context.Context, id domain.UserID) error {
 // Техника: класс версионированной документации.
 func TestVersionedDocumentation(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		fake := &fakeAuth{}
 		router := NewRouter(handler.NewAuthHandler(fake), handler.NewUserHandler(fake), handler.NewProjectHandler(nil), handler.NewRoleHandler(nil), "test")
 		for _, path := range []string{"/api/v1/docs", "/api/v1/openapi.yaml", "/api/v1/openapi.json"} {
@@ -233,14 +224,12 @@ func TestVersionedDocumentation(t *testing.T) {
 				allureCtx.Errorf("GET %s: status = %d, want 404", path, response.Code)
 			}
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности данных регистрации и ошибок.
 func TestRegistrationRoutes(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		const path = "/api/v1/auth/register"
 		for _, tt := range []struct {
 			name   string
@@ -265,7 +254,6 @@ func TestRegistrationRoutes(t *testing.T) {
 		} {
 			t.Run(path+"/"+tt.name, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					fake := &fakeAuth{registerErr: tt.err}
 					router := NewRouter(handler.NewAuthHandler(fake), handler.NewUserHandler(fake), handler.NewProjectHandler(nil), handler.NewRoleHandler(nil), "test")
 					request := httptest.NewRequest(http.MethodPost, path, bytes.NewBufferString(tt.body))
@@ -290,18 +278,15 @@ func TestRegistrationRoutes(t *testing.T) {
 					if strings.Contains(response.Body.String(), "private database error") || strings.Contains(response.Body.String(), "password-12345") {
 						allureCtx.Fatal("response exposed password or internal error")
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: классы существующих и удалённых маршрутов.
 func TestRegistrationOpenAPIAndRemovedCreateUser(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		fake := &fakeAuth{}
 		router := NewRouter(handler.NewAuthHandler(fake), handler.NewUserHandler(fake), handler.NewProjectHandler(nil), handler.NewRoleHandler(nil), "test")
 		response := httptest.NewRecorder()
@@ -348,14 +333,12 @@ func TestRegistrationOpenAPIAndRemovedCreateUser(t *testing.T) {
 				allureCtx.Errorf("registration field %q is not required", field)
 			}
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности ответов списка.
 func TestListUsersRoute(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		users := []service.RegisteredUser{
 			{ID: testUserID, Email: "user@example.com"},
 			{ID: "0197eb5a-37c6-7e48-8cd6-0c19edcd72f2", Email: "admin@example.com"},
@@ -376,7 +359,6 @@ func TestListUsersRoute(t *testing.T) {
 		} {
 			t.Run(tt.name, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					fake := &fakeAuth{principal: service.Principal{UserID: testUserID}, users: tt.users, listErr: tt.err}
 					router := NewRouter(handler.NewAuthHandler(fake), handler.NewUserHandler(fake), handler.NewProjectHandler(nil), handler.NewRoleHandler(nil), "test")
 					request := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
@@ -402,18 +384,15 @@ func TestListUsersRoute(t *testing.T) {
 					if strings.Contains(response.Body.String(), "private database error") || strings.Contains(response.Body.String(), "password") {
 						allureCtx.Fatal("response exposed password or internal error")
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: граничные значения пагинации.
 func TestListUsersPaginationParameters(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, test := range []struct {
 			query  string
 			status int
@@ -428,7 +407,6 @@ func TestListUsersPaginationParameters(t *testing.T) {
 		} {
 			t.Run(test.query, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					nextOffset := 15
 					fake := &fakeAuth{principal: service.Principal{UserID: testUserID}, nextPageToken: &nextOffset}
 					router := NewRouter(handler.NewAuthHandler(fake), handler.NewUserHandler(fake), handler.NewProjectHandler(nil), handler.NewRoleHandler(nil), "test")
@@ -450,18 +428,15 @@ func TestListUsersPaginationParameters(t *testing.T) {
 					} else if fake.listCalls != 0 {
 						allureCtx.Fatal("invalid pagination reached the service")
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности прав доступа.
 func TestUpdateUserProfilePermissions(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		const otherID = "0197eb5a-37c6-7e48-8cd6-0c19edcd72f2"
 		for _, test := range []struct {
 			name, token, target, body string
@@ -479,7 +454,6 @@ func TestUpdateUserProfilePermissions(t *testing.T) {
 		} {
 			t.Run(test.name, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					fake := &fakeAuth{principal: service.Principal{UserID: testUserID}}
 					router := NewRouter(handler.NewAuthHandler(fake), handler.NewUserHandler(fake), handler.NewProjectHandler(nil), handler.NewRoleHandler(nil), "test")
 					request := httptest.NewRequest(http.MethodPatch, "/api/v1/users/"+test.target, strings.NewReader(test.body))
@@ -502,18 +476,15 @@ func TestUpdateUserProfilePermissions(t *testing.T) {
 					if strings.Contains(response.Body.String(), "new-password-456") || (test.status == http.StatusOK && strings.Contains(response.Body.String(), "password_hash")) {
 						allureCtx.Fatal("patch response exposed credentials")
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: классы существующих и удалённых маршрутов.
 func TestUpdateUserOpenAPIAndRemovedResetPassword(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		fake := &fakeAuth{}
 		router := NewRouter(handler.NewAuthHandler(fake), handler.NewUserHandler(fake), handler.NewProjectHandler(nil), handler.NewRoleHandler(nil), "test")
 		response := httptest.NewRecorder()
@@ -561,14 +532,12 @@ func TestUpdateUserOpenAPIAndRemovedResetPassword(t *testing.T) {
 				allureCtx.Errorf("OpenAPI contains removed %q", removed)
 			}
 		}
-
 	})
 }
 
 // Техника: граничные значения длины пароля.
 func TestRegistrationPasswordLength(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, tc := range []struct {
 			password string
 			status   int
@@ -584,14 +553,12 @@ func TestRegistrationPasswordLength(t *testing.T) {
 				allureCtx.Errorf("password %q: status=%d, body=%s", tc.password, response.Code, response.Body.String())
 			}
 		}
-
 	})
 }
 
 // Техника: граничные значения пагинации.
 func TestListRolesPagination(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		repo := &rolesListRepository{roles: []domain.Role{
 			{ID: 1, Name: "reader", CanReadProject: true},
 			{ID: 2, Name: "runner", CanStartModel: true},
@@ -631,14 +598,12 @@ func TestListRolesPagination(t *testing.T) {
 			listRequest(allureCtx, router, http.MethodGet, "/api/v1/roles"+query, "", true, http.StatusUnprocessableEntity)
 		}
 		listRequest(allureCtx, router, http.MethodGet, "/api/v1/roles", "", false, http.StatusUnauthorized)
-
 	})
 }
 
 // Техника: классы эквивалентности путей и идентификаторов.
 func TestProjectListAndIDPaths(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		repo := &projectsListRepository{projects: []domain.Project{
 			{ID: "project-a", Name: "demo"}, {ID: "project-b", Name: "other"}, {ID: "project-c", Name: "demo"},
 		}}
@@ -668,14 +633,12 @@ func TestProjectListAndIDPaths(t *testing.T) {
 		}
 		listRequest(allureCtx, router, http.MethodGet, "/api/v1/projects?limit=0", "", true, http.StatusUnprocessableEntity)
 		listRequest(allureCtx, router, http.MethodGet, "/api/v1/projects", "", false, http.StatusUnauthorized)
-
 	})
 }
 
 // Техника: граничные значения параметров пагинации.
 func TestUserServicePaginationOpenAPI(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		auth := &fakeAuth{}
 		router := NewRouter(handler.NewAuthHandler(auth), handler.NewUserHandler(auth), handler.NewProjectHandler(nil), handler.NewRoleHandler(nil), "test")
 		response := listRequest(allureCtx, router, http.MethodGet, "/api/v1/openapi.json", "", false, http.StatusOK)
@@ -719,7 +682,6 @@ func TestUserServicePaginationOpenAPI(t *testing.T) {
 		if _, exists := responses["204"]; exists {
 			allureCtx.Error("member PUT must not advertise 204")
 		}
-
 	})
 }
 

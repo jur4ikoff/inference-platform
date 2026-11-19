@@ -16,7 +16,6 @@ import (
 // Техника: классы эквивалентности корректной и некорректной подписи токена.
 func TestAccessTokenIsIndependentlyVerifiedByPublicJWK(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		private, err := rsa.GenerateKey(rand.Reader, 2048)
 		if err != nil {
 			allureCtx.Fatal(err)
@@ -63,7 +62,6 @@ func TestAccessTokenIsIndependentlyVerifiedByPublicJWK(t *testing.T) {
 		if _, err := other.ParseAccessToken(token); err == nil {
 			allureCtx.Fatal("token with an invalid signature was accepted")
 		}
-
 	})
 }
 

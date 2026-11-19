@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	allure "github.com/allure-framework/allure-go/commons/gotest"
 	"github.com/jackc/pgx/v5"
 	"github.com/jur4ikoff/inference-service/internal/testutil"
 	"github.com/moby/moby/api/types/container"
@@ -34,7 +35,7 @@ func (d testDocker) GetContainer(_ context.Context, id string) (client.Container
 	return client.ContainerInspectResult{Container: container.InspectResponse{State: &container.State{Running: id != "container-2"}}}, nil
 }
 
-func collectDeploymentMetrics(t *testing.T, db testDB, docker testDocker) (float64, map[string]float64) {
+func collectDeploymentMetrics(t *allure.Context, db testDB, docker testDocker) (float64, map[string]float64) {
 	t.Helper()
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(NewDeploymentsCollector(db, docker))
@@ -63,24 +64,30 @@ func collectDeploymentMetrics(t *testing.T, db testDB, docker testDocker) (float
 
 // Техника: разбиение на классы эквивалентности; случай доступных БД и Docker с несколькими владельцами контейнеров.
 func TestDeploymentMetricsCountsRunningContainers(t *testing.T) {
-	success, counts := collectDeploymentMetrics(t, testDB{}, testDocker{})
-	if success != 1 || counts["alice"] != 1 || counts["bob"] != 1 {
-		t.Fatalf("success=%v counts=%v", success, counts)
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		success, counts := collectDeploymentMetrics(allureCtx, testDB{}, testDocker{})
+		if success != 1 || counts["alice"] != 1 || counts["bob"] != 1 {
+			allureCtx.Fatalf("success=%v counts=%v", success, counts)
+		}
+	})
 }
 
 // Техника: разбиение на классы эквивалентности; случай ошибки запроса к БД.
 func TestDeploymentMetricsReportsDatabaseFailure(t *testing.T) {
-	success, counts := collectDeploymentMetrics(t, testDB{fail: true}, testDocker{})
-	if success != 0 || len(counts) != 0 {
-		t.Fatalf("success=%v partial counts=%v", success, counts)
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		success, counts := collectDeploymentMetrics(allureCtx, testDB{fail: true}, testDocker{})
+		if success != 0 || len(counts) != 0 {
+			allureCtx.Fatalf("success=%v partial counts=%v", success, counts)
+		}
+	})
 }
 
 // Техника: разбиение на классы эквивалентности; случай ошибки проверки контейнера в Docker.
 func TestDeploymentMetricsReportsDockerFailure(t *testing.T) {
-	success, counts := collectDeploymentMetrics(t, testDB{}, testDocker{fail: true})
-	if success != 0 || len(counts) != 0 {
-		t.Fatalf("success=%v partial counts=%v", success, counts)
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		success, counts := collectDeploymentMetrics(allureCtx, testDB{}, testDocker{fail: true})
+		if success != 0 || len(counts) != 0 {
+			allureCtx.Fatalf("success=%v partial counts=%v", success, counts)
+		}
+	})
 }

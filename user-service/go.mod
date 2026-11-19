@@ -3,6 +3,7 @@ module github.com/jur4ikoff/user-service
 go 1.26.5
 
 require (
+	github.com/allure-framework/allure-go/commons v1.3.1
 	github.com/danielgtaylor/huma/v2 v2.39.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
@@ -17,7 +18,6 @@ require (
 replace github.com/jur4ikoff/utils => ../utils
 
 require (
-	github.com/allure-framework/allure-go/commons v1.3.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

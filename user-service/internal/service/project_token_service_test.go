@@ -15,11 +15,9 @@ import (
 // Техника: классы эквивалентности доступа и граничное время токена.
 func TestProjectTokenCases(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, valid := range []bool{true, false} {
 			t.Run(map[bool]string{true: "valid", false: "anonymous"}[valid], func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					u := testutil.UserMother{}.Regular()
 					now := time.Now().UTC()
 					end := now.Add(time.Minute)
@@ -44,10 +42,8 @@ func TestProjectTokenCases(t *testing.T) {
 					if !valid && !errors.Is(err, service.ErrInvalidToken) {
 						allureCtx.Fatalf("err=%v", err)
 					}
-
 				})
 			})
 		}
-
 	})
 }

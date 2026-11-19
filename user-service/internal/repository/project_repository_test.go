@@ -16,12 +16,10 @@ import (
 // Техника: классы эквивалентности результатов запроса и ошибок БД.
 func TestProjectRepositoryUnit(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, method := range []string{"create", "list", "grant", "get", "update", "delete", "members", "change member"} {
 			for _, scenario := range []string{"success", "database error"} {
 				t.Run(method+"/"+scenario, func(t *testing.T) {
 					allure.Wrap(t, func(allureCtx *allure.Context) {
-
 						failure := errors.New("database error")
 						var injected error
 						if scenario == "database error" {
@@ -56,23 +54,19 @@ func TestProjectRepositoryUnit(t *testing.T) {
 						if scenario == "database error" && !errors.Is(err, failure) {
 							allureCtx.Fatalf("err=%v", err)
 						}
-
 					})
 				})
 			}
 		}
-
 	})
 }
 
 // Техника: класс отсутствующего проекта.
 func TestProjectRepositoryMissing(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, method := range []string{"grant", "get", "update", "delete", "members", "change member"} {
 			t.Run(method, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					missing := "LockProject"
 					if method == "grant" {
 						missing = "GetProjectTokenGrant"
@@ -99,18 +93,15 @@ func TestProjectRepositoryMissing(t *testing.T) {
 					if !errors.Is(err, domain.ErrProjectNotFound) {
 						allureCtx.Fatalf("err=%v", err)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: класс существующего проекта и обработка результата.
 func TestProjectRepositoryMapsResult(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		db, _ := repositoryFixture(allureCtx, "", nil)
 		r := repository.NewProjectRepository(db)
 		user := testutil.UserMother{}.Regular()
@@ -118,14 +109,12 @@ func TestProjectRepositoryMapsResult(t *testing.T) {
 		if err != nil || project.Name != "demo" || project.Description != "description" {
 			allureCtx.Fatalf("project=%+v err=%v", project, err)
 		}
-
 	})
 }
 
 // Техника: класс конфликта уникального имени проекта.
 func TestProjectRepositoryDuplicate(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		db, tx := repositoryFixture(allureCtx, "", nil)
 		original := tx.QueryRowFunc
 		tx.QueryRowFunc = func(ctx context.Context, sql string, args ...interface{}) pgx.Row {
@@ -139,18 +128,15 @@ func TestProjectRepositoryDuplicate(t *testing.T) {
 		if !errors.Is(err, domain.ErrProjectExists) {
 			allureCtx.Fatalf("err=%v", err)
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности пустого списка и отсутствующего участника.
 func TestProjectRepositoryEmptyResults(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, method := range []string{"list", "members", "remove member"} {
 			t.Run(method, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					missing := "ListVisibleProjects"
 					if method == "members" {
 						missing = "ListProjectMembers"
@@ -180,18 +166,15 @@ func TestProjectRepositoryEmptyResults(t *testing.T) {
 					if !errors.Is(err, want) {
 						allureCtx.Fatalf("err=%v", err)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: переходы транзакции при ошибке аудита.
 func TestProjectCreateAuditFailureRollsBack(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		db, tx := repositoryFixture(allureCtx, "", nil)
 		failure := errors.New("audit failure")
 		old := tx.ExecFunc
@@ -209,6 +192,5 @@ func TestProjectCreateAuditFailureRollsBack(t *testing.T) {
 		if !errors.Is(err, failure) || commits != 0 || rollbacks != 1 {
 			allureCtx.Fatalf("err=%v commits=%d rollbacks=%d", err, commits, rollbacks)
 		}
-
 	})
 }

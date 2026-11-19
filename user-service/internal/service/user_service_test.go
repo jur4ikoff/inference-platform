@@ -20,32 +20,27 @@ import (
 // Техника: граничные значения длины пароля.
 func TestPasswordMinimumLength(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, tc := range []struct {
 			password string
 			valid    bool
 		}{{"1234567", false}, {"12345678", true}, {"пароль12", true}} {
 			t.Run(tc.password, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					repository := &testutil.MockUserRepository{CreateFunc: func(context.Context, domain.User) error { return nil }}
 					svc := service.NewUserService(repository, &testutil.MockPasswordHasher{HashFunc: func(string) (string, error) { return "hash", nil }}, nil, &testutil.MockIDGenerator{NewUserIDFunc: func() domain.UserID { return "id" }}, &testutil.MockClock{NowFunc: func() time.Time { return time.Now() }}, time.Minute)
 					_, err := svc.Register(context.Background(), service.RegisterInput{Login: "alice", Email: "alice@example.com", Firstname: "Alice", Lastname: "Example", Password: tc.password})
 					if tc.valid && err != nil || !tc.valid && !errors.Is(err, service.ErrInvalidInput) {
 						allureCtx.Fatalf("err=%v", err)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: переходы состояний профиля и учётных данных.
 func TestUpdateUserChangesProfileAndCredentials(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		ctx := context.Background()
 		repo := &memoryUsers{}
 		hasher := infrastructure.NewPasswordHasher(bcrypt.MinCost)
@@ -84,14 +79,12 @@ func TestUpdateUserChangesProfileAndCredentials(t *testing.T) {
 		if firstname != " Юрий " || lastname != " Попов " {
 			allureCtx.Fatal("normalization changed the caller's input")
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности ошибочных входных данных и ошибок зависимостей.
 func TestUpdateUserFailures(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		invalidEmail, short, long, multibyte := "invalid", "short", strings.Repeat("a", 73), strings.Repeat("я", 73)
 		password := "new-password-456"
 		blankFirstname := ""
@@ -117,7 +110,6 @@ func TestUpdateUserFailures(t *testing.T) {
 		} {
 			t.Run(test.name, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					before := domain.User{ID: "user-id", Email: "user@example.com", PasswordHash: "old-hash", Firstname: "Юрий"}
 					repo := &memoryUsers{user: before, updateErr: test.updateErr}
 					var hasher service.PasswordHasher = infrastructure.NewPasswordHasher(bcrypt.MinCost)
@@ -129,11 +121,9 @@ func TestUpdateUserFailures(t *testing.T) {
 					if !errors.Is(err, test.wantErr) || repo.updates != test.updates || repo.user != before {
 						allureCtx.Fatalf("error = %v, writes = %d; want %v, %d with unchanged user", err, repo.updates, test.wantErr, test.updates)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
@@ -249,12 +239,10 @@ func (m *tokenManager) PublicJWKSet() (authjwt.JWKSet, error) { return authjwt.J
 // Техника: классы эквивалентности данных и прав доступа.
 func TestUserUseCases(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, method := range []string{"register", "login", "verify", "keys", "get", "get login", "authorize", "list", "delete"} {
 			for _, valid := range []bool{true, false} {
 				t.Run(method+map[bool]string{true: "/valid", false: "/invalid"}[valid], func(t *testing.T) {
 					allure.Wrap(t, func(allureCtx *allure.Context) {
-
 						u := testutil.UserMother{}.Regular()
 						failure := errors.New("failure")
 						repo := &visibleRepo{MockUserRepository: &testutil.MockUserRepository{CreateFunc: func(context.Context, domain.User) error { return nil }, FindByLoginFunc: func(context.Context, string) (domain.User, error) { return u, nil }, ListFunc: func(context.Context, int, int) ([]domain.User, error) { return []domain.User{u}, nil }, DeleteFunc: func(context.Context, domain.UserID) error { return nil }}, user: u}
@@ -341,11 +329,9 @@ func TestUserUseCases(t *testing.T) {
 						if !errors.Is(err, want) {
 							allureCtx.Fatalf("err=%v want=%v", err, want)
 						}
-
 					})
 				})
 			}
 		}
-
 	})
 }

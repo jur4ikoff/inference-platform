@@ -13,7 +13,6 @@ import (
 // Техника: граничные значения и классы эквивалентности имён проекта.
 func TestProjectNameValidation(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, tt := range []struct {
 			name  string
 			valid bool
@@ -26,18 +25,15 @@ func TestProjectNameValidation(t *testing.T) {
 				allureCtx.Errorf("validProjectName(%q) = %t", tt.name, got)
 			}
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности авторизованного и анонимного пользователя.
 func TestListProjectsUsesPrincipalFromContext(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, authenticated := range []bool{true, false} {
 			t.Run(map[bool]string{true: "authenticated", false: "anonymous"}[authenticated], func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					repository := &projectListStub{}
 					projects := service.NewProjectService(repository)
 					actor := domain.UserID("actor-id")
@@ -52,11 +48,9 @@ func TestListProjectsUsesPrincipalFromContext(t *testing.T) {
 					if !authenticated && !errors.Is(err, service.ErrInvalidToken) {
 						allureCtx.Fatalf("err=%v", err)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
@@ -77,12 +71,10 @@ func (r *projectListStub) Create(_ context.Context, _ domain.UserID, name, descr
 // Техника: классы эквивалентности авторизованных и анонимных запросов.
 func TestProjectUseCases(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, method := range []string{"create", "get", "list", "update", "delete", "members", "change member"} {
 			for _, valid := range []bool{true, false} {
 				t.Run(method+map[bool]string{true: "/valid", false: "/invalid"}[valid], func(t *testing.T) {
 					allure.Wrap(t, func(allureCtx *allure.Context) {
-
 						u := testutil.UserMother{}.Regular()
 						p := testutil.ProjectMother{}.Demo()
 						calls := 0
@@ -125,19 +117,16 @@ func TestProjectUseCases(t *testing.T) {
 						if !valid && (!errors.Is(err, service.ErrInvalidToken) || calls != 0) {
 							allureCtx.Fatalf("err=%v calls=%d", err, calls)
 						}
-
 					})
 				})
 			}
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности ошибок репозитория.
 func TestProjectRepositoryErrors(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		failure := errors.New("repository unavailable")
 		user := testutil.UserMother{}.Regular()
 		ctx := service.WithPrincipal(context.Background(), service.Principal{UserID: user.ID})
@@ -156,15 +145,12 @@ func TestProjectRepositoryErrors(t *testing.T) {
 		}{{"create", func() error { _, e := svc.CreateProject(ctx, "demo", description); return e }}, {"get", func() error { _, e := svc.GetProject(ctx, "demo"); return e }}, {"list", func() error { _, e := svc.ListProjects(ctx, service.ListProjectsInput{}); return e }}, {"update", func() error { _, e := svc.UpdateProject(ctx, "demo", &description); return e }}, {"delete", func() error { return svc.DeleteProject(ctx, "demo") }}, {"members", func() error { _, e := svc.ListMembers(ctx, "demo", 0, 1); return e }}, {"change member", func() error { _, e := svc.ChangeMember(ctx, "demo", user.ID, 1, false); return e }}} {
 			t.Run(tc.name, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					err := tc.call()
 					if !errors.Is(err, failure) {
 						allureCtx.Fatalf("err=%v", err)
 					}
-
 				})
 			})
 		}
-
 	})
 }

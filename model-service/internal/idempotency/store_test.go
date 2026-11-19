@@ -16,7 +16,6 @@ import (
 
 func TestConcurrentReplayAcrossPools(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		dsn := os.Getenv("MODEL_TEST_DATABASE_URL")
 		if dsn == "" {
 			t.Skip("set MODEL_TEST_DATABASE_URL to run PostgreSQL integration test")
@@ -98,6 +97,5 @@ func TestConcurrentReplayAcrossPools(t *testing.T) {
 		if !errors.As(err, &failure) || failure.Status != 503 {
 			allureCtx.Fatalf("expected recorded status 503, got %v", err)
 		}
-
 	})
 }

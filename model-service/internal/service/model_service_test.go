@@ -27,7 +27,6 @@ func (r *deleteRepositoryStub) Delete(context.Context, string, string) error {
 // Техника: переходы состояний deployment.
 func TestDeleteRequiresAllDeploymentsStopped(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		const modelID = "e75957e1-6ac2-403c-8154-103d8d9c333d"
 		for _, tc := range []struct {
 			name                string
@@ -46,30 +45,25 @@ func TestDeleteRequiresAllDeploymentsStopped(t *testing.T) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					repo := &deleteRepositoryStub{}
 					svc := NewModelService(repo, historyRuntimeStub{history: tc.history, err: tc.runtimeErr})
 					err := svc.Delete(context.Background(), "ml", modelID)
 					if !errors.Is(err, tc.wantErr) || repo.deleted != tc.deleted {
 						allureCtx.Fatalf("error=%v deleted=%v", err, repo.deleted)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности входных данных.
 func TestModelUseCases(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, method := range []string{"create", "get", "update", "start", "create deployment", "get deployment", "stop deployment", "history", "active"} {
 			for _, valid := range []bool{true, false} {
 				t.Run(method+map[bool]string{true: "/valid", false: "/invalid"}[valid], func(t *testing.T) {
 					allure.Wrap(t, func(allureCtx *allure.Context) {
-
 						ctx := context.Background()
 						model := testutil.ModelMother{}.HuggingFace()
 						deployment := testutil.DeploymentMother{}.Running()
@@ -116,19 +110,16 @@ func TestModelUseCases(t *testing.T) {
 						if !valid && (!errors.Is(err, ErrInvalidInput) || calls != 0) {
 							allureCtx.Fatalf("err=%v calls=%d", err, calls)
 						}
-
 					})
 				})
 			}
 		}
-
 	})
 }
 
 // Техника: переходы состояний deployment.
 func TestStopAlreadyStopped(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		model := testutil.ModelMother{}.HuggingFace()
 		deployment := testutil.DeploymentMother{}.Stopped()
 		repo := &testutil.MockModelRepository{GetFunc: func(context.Context, string, string) (domain.Model, error) { return model, nil }}
@@ -137,21 +128,18 @@ func TestStopAlreadyStopped(t *testing.T) {
 		if err != nil || accepted {
 			allureCtx.Fatalf("accepted=%v err=%v", accepted, err)
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности ошибок зависимостей.
 func TestModelDependencyErrors(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		failure := errors.New("dependency unavailable")
 		model := testutil.ModelMother{}.HuggingFace()
 		deployment := testutil.DeploymentMother{}.Running()
 		for _, method := range []string{"create", "get", "update", "delete", "start", "create deployment", "get deployment", "stop deployment", "history", "active"} {
 			t.Run(method, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					repo := &testutil.MockModelRepository{CreateFunc: func(context.Context, domain.Model) (domain.Model, error) { return domain.Model{}, failure }, GetFunc: func(context.Context, string, string) (domain.Model, error) {
 						if method == "get" || method == "delete" {
 							return domain.Model{}, failure
@@ -195,11 +183,9 @@ func TestModelDependencyErrors(t *testing.T) {
 					if !errors.Is(err, failure) {
 						allureCtx.Fatalf("error=%v", err)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
@@ -221,11 +207,9 @@ func (r *memoryModelRepository) Create(_ context.Context, m domain.Model) (domai
 // Техника: классы эквивалентности уникальности имени; классический стиль с репозиторием в памяти.
 func TestCreateModelWithInMemoryRepository(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, duplicate := range []bool{false, true} {
 			t.Run(map[bool]string{false: "new", true: "duplicate"}[duplicate], func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					fixture := testutil.ModelMother{}.HuggingFace()
 					repo := &memoryModelRepository{models: map[string]domain.Model{}}
 					if duplicate {
@@ -239,11 +223,9 @@ func TestCreateModelWithInMemoryRepository(t *testing.T) {
 					if !duplicate && (err != nil || repo.models[result.ID].Name != fixture.Name) {
 						allureCtx.Fatalf("result=%+v err=%v", result, err)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 

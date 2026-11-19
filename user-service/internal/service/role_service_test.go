@@ -13,12 +13,10 @@ import (
 // Техника: классы эквивалентности и границы идентификатора роли.
 func TestRoleUseCases(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, method := range []string{"create", "get", "list", "update", "delete", "platform"} {
 			for _, valid := range []bool{true, false} {
 				t.Run(method+map[bool]string{true: "/valid", false: "/invalid"}[valid], func(t *testing.T) {
 					allure.Wrap(t, func(allureCtx *allure.Context) {
-
 						u := testutil.UserMother{}.Regular()
 						role := testutil.RoleMother{}.Developer()
 						calls := 0
@@ -67,19 +65,16 @@ func TestRoleUseCases(t *testing.T) {
 						if !valid && (!errors.Is(err, service.ErrInvalidInput) || calls != 0) {
 							allureCtx.Fatalf("err=%v calls=%d", err, calls)
 						}
-
 					})
 				})
 			}
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности ошибок репозитория.
 func TestRoleRepositoryErrors(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		failure := errors.New("repository unavailable")
 		user := testutil.UserMother{}.Regular()
 		ctx := service.WithPrincipal(context.Background(), service.Principal{UserID: user.ID})
@@ -94,15 +89,12 @@ func TestRoleRepositoryErrors(t *testing.T) {
 		}{{"create", func() error { _, e := svc.CreateRole(ctx, domain.Role{Name: name}); return e }}, {"get", func() error { _, e := svc.GetRole(ctx, 1); return e }}, {"list", func() error { _, e := svc.ListRoles(ctx, service.ListRolesInput{}); return e }}, {"update", func() error { _, e := svc.UpdateRole(ctx, 1, domain.RoleUpdate{Name: &name}); return e }}, {"delete", func() error { return svc.DeleteRole(ctx, 1) }}} {
 			t.Run(tc.name, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					err := tc.call()
 					if !errors.Is(err, failure) {
 						allureCtx.Fatalf("err=%v", err)
 					}
-
 				})
 			})
 		}
-
 	})
 }

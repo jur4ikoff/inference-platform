@@ -16,12 +16,10 @@ import (
 // Техника: классы эквивалентности успешного запроса и ошибки БД.
 func TestRoleRepositoryUnit(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, method := range []string{"create", "get", "list", "update", "delete"} {
 			for _, scenario := range []string{"success", "database error"} {
 				t.Run(method+"/"+scenario, func(t *testing.T) {
 					allure.Wrap(t, func(allureCtx *allure.Context) {
-
 						failure := errors.New("database error")
 						var injected error
 						if scenario == "database error" {
@@ -52,23 +50,19 @@ func TestRoleRepositoryUnit(t *testing.T) {
 						if scenario == "database error" && !errors.Is(err, failure) {
 							allureCtx.Fatalf("err=%v", err)
 						}
-
 					})
 				})
 			}
 		}
-
 	})
 }
 
 // Техника: класс отсутствующей роли.
 func TestRoleRepositoryMissing(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, method := range []string{"get", "update", "delete"} {
 			t.Run(method, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					missing := "LockRole"
 					if method == "get" {
 						missing = "GetRole"
@@ -90,32 +84,27 @@ func TestRoleRepositoryMissing(t *testing.T) {
 					if !errors.Is(err, domain.ErrRoleNotFound) {
 						allureCtx.Fatalf("err=%v", err)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: класс существующей роли и обработка результата.
 func TestRoleRepositoryMapsResult(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		db, _ := repositoryFixture(allureCtx, "", nil)
 		r := repository.NewRoleRepository(db)
 		role, err := r.Get(context.Background(), 1)
 		if err != nil || role.ID != 1 || role.Name != "developer" || !role.CanReadModel {
 			allureCtx.Fatalf("role=%+v err=%v", role, err)
 		}
-
 	})
 }
 
 // Техника: класс конфликта уникального имени роли.
 func TestRoleRepositoryDuplicate(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		db, tx := repositoryFixture(allureCtx, "", nil)
 		original := tx.QueryRowFunc
 		tx.QueryRowFunc = func(ctx context.Context, sql string, args ...interface{}) pgx.Row {
@@ -129,27 +118,23 @@ func TestRoleRepositoryDuplicate(t *testing.T) {
 		if !errors.Is(err, domain.ErrRoleAlreadyExists) {
 			allureCtx.Fatalf("err=%v", err)
 		}
-
 	})
 }
 
 // Техника: класс пустого результата списка.
 func TestRoleRepositoryEmptyList(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		db, _ := repositoryFixture(allureCtx, "ListRoles", nil)
 		roles, err := repository.NewRoleRepository(db).List(context.Background(), "", 0, 10)
 		if err != nil || len(roles) != 0 {
 			allureCtx.Fatalf("roles=%+v err=%v", roles, err)
 		}
-
 	})
 }
 
 // Техника: переходы транзакции при ошибке аудита.
 func TestRoleCreateAuditFailureRollsBack(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		db, tx := repositoryFixture(allureCtx, "", nil)
 		failure := errors.New("audit failure")
 		old := tx.ExecFunc
@@ -167,6 +152,5 @@ func TestRoleCreateAuditFailureRollsBack(t *testing.T) {
 		if !errors.Is(err, failure) || commits != 0 || rollbacks != 1 {
 			allureCtx.Fatalf("err=%v commits=%d rollbacks=%d", err, commits, rollbacks)
 		}
-
 	})
 }

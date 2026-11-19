@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	allure "github.com/allure-framework/allure-go/commons/gotest"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"github.com/prometheus/client_golang/prometheus"
@@ -30,7 +31,7 @@ func (d limitsDocker) GetContainer(_ context.Context, id string) (client.Contain
 	return client.ContainerInspectResult{Container: container.InspectResponse{Name: "/" + id, HostConfig: cfg}}, nil
 }
 
-func collectLimitMetrics(t *testing.T, fail bool) map[string][]float64 {
+func collectLimitMetrics(t *allure.Context, fail bool) map[string][]float64 {
 	t.Helper()
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(NewContainerLimitsCollector(limitsDocker{fail: fail}, "test"))
@@ -49,16 +50,20 @@ func collectLimitMetrics(t *testing.T, fail bool) map[string][]float64 {
 
 // Техника: разбиение на классы эквивалентности; варианты заданных и незаданных ограничений контейнеров.
 func TestContainerLimitsExportsConfiguredResources(t *testing.T) {
-	values := collectLimitMetrics(t, false)
-	if values["platform_container_limits_scrape_success"][0] != 1 || len(values["platform_container_cpu_limit_cores"]) != 1 || values["platform_container_cpu_limit_cores"][0] != 1.5 || values["platform_container_memory_limit_bytes"][0] != 512<<20 || len(values["platform_container_limit_configured"]) != 4 {
-		t.Fatalf("unexpected limits: %v", values)
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		values := collectLimitMetrics(allureCtx, false)
+		if values["platform_container_limits_scrape_success"][0] != 1 || len(values["platform_container_cpu_limit_cores"]) != 1 || values["platform_container_cpu_limit_cores"][0] != 1.5 || values["platform_container_memory_limit_bytes"][0] != 512<<20 || len(values["platform_container_limit_configured"]) != 4 {
+			allureCtx.Fatalf("unexpected limits: %v", values)
+		}
+	})
 }
 
 // Техника: разбиение на классы эквивалентности; случай ошибки доступа к Docker.
 func TestContainerLimitsReportsDockerFailure(t *testing.T) {
-	values := collectLimitMetrics(t, true)
-	if values["platform_container_limits_scrape_success"][0] != 0 || len(values["platform_container_cpu_limit_cores"]) != 0 {
-		t.Fatalf("unexpected failure metrics: %v", values)
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		values := collectLimitMetrics(allureCtx, true)
+		if values["platform_container_limits_scrape_success"][0] != 0 || len(values["platform_container_cpu_limit_cores"]) != 0 {
+			allureCtx.Fatalf("unexpected failure metrics: %v", values)
+		}
+	})
 }

@@ -34,7 +34,6 @@ import (
 // Техника: классы эквивалентности прав, ограничений уникальности и переходов состояний пользователя.
 func TestUserRepositoryIntegration(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		dsn := os.Getenv("USER_TEST_DATABASE_URL")
 		if dsn == "" {
 			t.Skip("USER_TEST_DATABASE_URL is not set")
@@ -553,7 +552,6 @@ func TestUserRepositoryIntegration(t *testing.T) {
 		if err = pool.QueryRow(ctx, "SELECT count(*) FROM audit_events WHERE object_id=$1 AND action IN ('user.created','user.updated','user.deleted')", profile.ID).Scan(&auditCount); err != nil || auditCount != 3 {
 			allureCtx.Fatalf("audit: %d %v", auditCount, err)
 		}
-
 	})
 }
 
@@ -654,12 +652,10 @@ func repositoryFixture(t *allure.Context, missing string, failure error) (*testu
 // Техника: классы эквивалентности результатов БД и ошибок зависимостей.
 func TestUserRepositoryUnit(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, method := range []string{"create", "create saved", "bootstrap", "find email", "find login", "list", "update", "delete", "auth state", "update hash", "actor role", "set role", "get visible", "list visible"} {
 			for _, scenario := range []string{"success", "database error"} {
 				t.Run(method+"/"+scenario, func(t *testing.T) {
 					allure.Wrap(t, func(allureCtx *allure.Context) {
-
 						failure := errors.New("database error")
 						var injected error
 						if scenario == "database error" {
@@ -707,19 +703,16 @@ func TestUserRepositoryUnit(t *testing.T) {
 						if scenario == "database error" && !errors.Is(err, failure) {
 							allureCtx.Fatalf("err=%v", err)
 						}
-
 					})
 				})
 			}
 		}
-
 	})
 }
 
 // Техника: класс отсутствующей записи и пустого результата.
 func TestUserRepositoryMissing(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		cases := []struct {
 			method, query string
 			want          error
@@ -729,7 +722,6 @@ func TestUserRepositoryMissing(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(tc.method, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					db, _ := repositoryFixture(allureCtx, tc.query, nil)
 					repo := repository.NewUserRepository(db)
 					user := testutil.UserMother{}.Regular()
@@ -774,22 +766,18 @@ func TestUserRepositoryMissing(t *testing.T) {
 					if !errors.Is(err, tc.want) {
 						allureCtx.Fatalf("error=%v want=%v", err, tc.want)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности чтения существующей записи.
 func TestUserRepositoryMapsDatabaseResults(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, method := range []string{"find email", "find login", "auth state", "get visible", "list", "list visible"} {
 			t.Run(method, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					db, _ := repositoryFixture(allureCtx, "", nil)
 					r := repository.NewUserRepository(db)
 					user := testutil.UserMother{}.Regular()
@@ -837,22 +825,18 @@ func TestUserRepositoryMapsDatabaseResults(t *testing.T) {
 					if err != nil || id != user.ID || email != user.Email {
 						allureCtx.Fatalf("id=%q email=%q err=%v", id, email, err)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: переходы состояния транзакции при успешной записи и ошибке SQL.
 func TestUserCreateTransactionOutcome(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, fail := range []bool{false, true} {
 			t.Run(map[bool]string{false: "commit", true: "rollback"}[fail], func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					db, tx := repositoryFixture(allureCtx, "", nil)
 					failure := errors.New("insert failed")
 					commits, rollbacks := 0, 0
@@ -866,25 +850,21 @@ func TestUserCreateTransactionOutcome(t *testing.T) {
 					if fail && (!errors.Is(err, failure) || commits != 0) || !fail && (err != nil || commits != 1) || rollbacks != 1 {
 						allureCtx.Fatalf("err=%v commits=%d rollbacks=%d", err, commits, rollbacks)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности нарушенных ограничений уникальности.
 func TestUserCreateUniqueConflicts(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, tc := range []struct {
 			constraint string
 			want       error
 		}{{"users_email_lower_unique_idx", domain.ErrEmailAlreadyTaken}, {"users_login_lower_unique_idx", domain.ErrLoginAlreadyTaken}} {
 			t.Run(tc.constraint, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					db, tx := repositoryFixture(allureCtx, "", nil)
 					tx.QueryRowFunc = func(context.Context, string, ...interface{}) pgx.Row {
 						return testutil.Row{Err: &pgconn.PgError{Code: "23505", ConstraintName: tc.constraint}}
@@ -894,18 +874,15 @@ func TestUserCreateUniqueConflicts(t *testing.T) {
 					if !errors.Is(err, tc.want) {
 						allureCtx.Fatalf("err=%v want=%v", err, tc.want)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: переходы состояний — назначение уже установленной роли.
 func TestSetPlatformRoleUnchanged(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		db, tx := repositoryFixture(allureCtx, "", nil)
 		commits, rollbacks := 0, 0
 		tx.CommitFunc = func(context.Context) error { commits++; return nil }
@@ -915,6 +892,5 @@ func TestSetPlatformRoleUnchanged(t *testing.T) {
 		if err != nil || result.ID != user.ID || commits != 0 || rollbacks != 1 {
 			allureCtx.Fatalf("result=%+v err=%v commits=%d rollbacks=%d", result, err, commits, rollbacks)
 		}
-
 	})
 }

@@ -20,7 +20,6 @@ import (
 // Техника: класс доступной документации.
 func TestDocumentation(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		router := NewHandler(nil).Router()
 		for _, test := range []struct {
 			path, contentType, content string
@@ -31,7 +30,6 @@ func TestDocumentation(t *testing.T) {
 		} {
 			t.Run(test.path, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					response := apiRequest(allureCtx, router, http.MethodGet, test.path, "", http.StatusOK)
 					if !strings.Contains(response.Header().Get("Content-Type"), test.contentType) {
 						allureCtx.Errorf("unexpected content type: %s", response.Header().Get("Content-Type"))
@@ -39,7 +37,6 @@ func TestDocumentation(t *testing.T) {
 					if !strings.Contains(response.Body.String(), test.content) {
 						allureCtx.Errorf("documentation does not contain %q", test.content)
 					}
-
 				})
 			})
 		}
@@ -139,39 +136,33 @@ func TestDocumentation(t *testing.T) {
 		if _, exists := spec.Paths["/api/v1/projects/{project}/deployments"]["get"]; !exists {
 			allureCtx.Fatal("active deployment list is not documented")
 		}
-
 	})
 }
 
 // Техника: класс неверсионированных маршрутов.
 func TestUnversionedRoutesNotFound(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		router := NewHandler(nil).Router()
 		for _, path := range []string{"/models", "/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", "/docs", "/openapi.yaml", "/api/v2/models"} {
 			apiRequest(allureCtx, router, http.MethodGet, path, "", http.StatusNotFound)
 		}
-
 	})
 }
 
 // Техника: класс удалённых маршрутов.
 func TestRemovedModelRoutesNotFound(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		router := NewHandler(nil).Router()
 		for _, method := range []string{http.MethodGet, http.MethodPost} {
 			apiRequest(allureCtx, router, method, "/api/v1/models?project=project-1", "", http.StatusNotFound)
 		}
 		apiRequest(allureCtx, router, http.MethodPost, "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1/interactions", `{"input":{}}`, http.StatusNotFound)
-
 	})
 }
 
 // Техника: классы эквивалентности имён и идентификаторов.
 func TestModelRoutesRejectNamesAsIdentifiers(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		router := NewHandler(nil).Router()
 		for _, test := range []struct {
 			method, suffix, body string
@@ -186,23 +177,19 @@ func TestModelRoutesRejectNamesAsIdentifiers(t *testing.T) {
 			apiRequest(allureCtx, router, test.method, "/api/v1/projects/project-1/models/demo"+test.suffix, test.body, http.StatusUnprocessableEntity)
 		}
 		apiRequest(allureCtx, router, http.MethodGet, "/api/v1/projects/project-1/models/by-id/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", "", http.StatusNotFound)
-
 	})
 }
 
 func TestCreateDeploymentRequiresIdempotencyKey(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		router := NewHandler(nil).Router()
 		apiRequest(allureCtx, router, http.MethodPost, "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1/deployment", "", http.StatusUnprocessableEntity)
-
 	})
 }
 
 // Техника: переходы состояний модели и deployment.
 func TestModelRoutes(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		model := domain.Model{
 			ID: "0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", Name: "demo", Description: "description", Username: "user-1", Project: "project-1",
 			CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(), Spec: domain.ModelSpec{ProviderType: domain.ProviderHuggingFace, ProviderHuggingFace: &domain.HuggingFaceProvider{Repo: "org/model"}},
@@ -269,14 +256,12 @@ func TestModelRoutes(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &list); err != nil || list.Models == nil || len(list.Models) != 0 || list.NextPageToken != nil || fake.project != "project-1" {
 			allureCtx.Fatalf("expected empty list: %s; project=%q", response.Body.String(), fake.project)
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности и граничные значения HTTP-запросов.
 func TestRequestValidation(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		router := NewHandler(nil).Router()
 		for _, test := range []struct {
 			name, body string
@@ -292,20 +277,16 @@ func TestRequestValidation(t *testing.T) {
 		} {
 			t.Run(test.name, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					apiRequest(allureCtx, router, http.MethodPost, "/api/v1/projects/project-1/models", test.body, test.status)
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности ошибок сервиса.
 func TestServiceErrors(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, test := range []struct {
 			err    error
 			status int
@@ -318,7 +299,6 @@ func TestServiceErrors(t *testing.T) {
 		} {
 			t.Run(http.StatusText(test.status), func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					router := NewHandler(&modelStub{err: test.err}).Router()
 					response := apiRequest(allureCtx, router, http.MethodGet, "/api/v1/projects/project-1/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", "", test.status)
 					var problem struct {
@@ -327,11 +307,9 @@ func TestServiceErrors(t *testing.T) {
 					if err := json.Unmarshal(response.Body.Bytes(), &problem); err != nil || problem.Status != test.status || strings.Contains(response.Body.String(), "private database details") {
 						allureCtx.Fatalf("unexpected error response: %s; error=%v", response.Body.String(), err)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
@@ -399,7 +377,6 @@ func (passthroughIdempotency) Execute(_ context.Context, _, _, _, _ string, run 
 // Техника: классы эквивалентности идентификаторов модели.
 func TestGetModelUsesID(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		model := domain.Model{ID: "0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", Project: "project-1", Name: "renamed", Spec: domain.ModelSpec{ProviderType: domain.ProviderHuggingFace, ProviderHuggingFace: &domain.HuggingFaceProvider{Repo: "org/model"}}}
 		fake := &modelStub{model: model}
 		router := NewHandler(fake).Router()
@@ -410,7 +387,6 @@ func TestGetModelUsesID(t *testing.T) {
 		}
 		fake.err = domain.ErrModelNotFound
 		apiRequest(allureCtx, router, http.MethodGet, "/api/v1/projects/project-2/models/0197eb5a-37c6-7e48-8cd6-0c19edcd72f1", "", http.StatusNotFound)
-
 	})
 }
 
@@ -472,7 +448,6 @@ func (s *modelStub) GetActiveDeployments(ctx context.Context, project string) ([
 // Техника: класс модели со статусом.
 func TestListModelsIncludesStatus(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		router := NewHandler(&modelStub{model: domain.Model{ID: "model-1"}}).Router()
 		response := apiRequest(allureCtx, router, http.MethodGet, "/api/v1/projects/demo/models", "", http.StatusOK)
 		var body struct {
@@ -484,16 +459,13 @@ func TestListModelsIncludesStatus(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || len(body.Models) != 1 || body.Models[0].ID != "model-1" || body.Models[0].Status != "running" {
 			allureCtx.Fatalf("unexpected list response: %s", response.Body.String())
 		}
-
 	})
 }
 
 // Техника: класс активного deployment.
 func TestDeleteModelWithActiveDeploymentReturnsConflict(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		router := NewHandler(&modelStub{err: service.ErrActiveDeployments}).Router()
 		apiRequest(allureCtx, router, http.MethodDelete, "/api/v1/projects/ml/models/e75957e1-6ac2-403c-8154-103d8d9c333d", "", http.StatusConflict)
-
 	})
 }

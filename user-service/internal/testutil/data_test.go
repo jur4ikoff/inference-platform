@@ -9,11 +9,9 @@ import (
 // Техника: разбиение по классам эквивалентности ролей.
 func TestUserMotherCreatesNamedRoles(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		mother := UserMother{}
 		if mother.Regular().PlatformRole != domain.PlatformRoleUser || mother.Admin().PlatformRole != domain.PlatformRoleAdmin {
 			allureCtx.Fatal("unexpected user roles")
 		}
-
 	})
 }

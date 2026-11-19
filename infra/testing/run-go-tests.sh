@@ -2,11 +2,13 @@
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 mode=${1:?expected unit, shuffle, processes, integration or coverage}
+case "$mode" in unit|shuffle|processes|integration|coverage) ;; *) printf 'Неизвестный режим: %s\n' "$mode" >&2; exit 2;; esac
 results="$root/test-results/$mode"
-mkdir -p "$results/junit"
-if ! command -v gotestsum >/dev/null 2>&1; then
-  printf '%s\n' 'gotestsum не найден: вывод отображается в консоли и сохраняется в формате go test -json' >&2
-fi
+export ALLURE_RESULTS_DIR="$results/allure-results"
+mkdir -p "$results"
+# Allure appends results; each test run must start with an empty directory.
+rm -rf "$ALLURE_RESULTS_DIR"
+mkdir -p "$ALLURE_RESULTS_DIR"
 if [[ "$mode" == processes ]]; then
   export TEST_PROCESS_LOG="$results/processes.tsv"
   : > "$TEST_PROCESS_LOG"
@@ -26,16 +28,12 @@ for module in user-service model-service inference-service; do
   if [[ "$mode" == processes ]]; then export TEST_PROCESS_MODULE="$module"; flags=(-exec="$root/infra/testing/trace-test-process.sh" "${flags[@]}"); fi
   printf '\n%s: %s\n' "$mode" "$module"
   # Remove previous generated results so an interrupted run cannot be reported as current.
-  rm -f "$results/$module.xml" "$results/junit/$module.xml" "$results/$module.json" "$results/$module.tests.html"
+  rm -f "$results/$module.json" "$results/$module.tests.html"
   if [[ "$mode" == coverage ]]; then
     rm -f "$results/$module.cover" "$results/$module.html" "$results/$module.txt" "$results/$module.cobertura.xml"
   fi
-  if command -v gotestsum >/dev/null 2>&1; then
-    if ! (cd "$workdir" && gotestsum --junitfile "$results/junit/$module.xml" --jsonfile "$results/$module.json" -- "${flags[@]}"); then status=1; fi
-  else
-    if ! (cd "$workdir" && go test -json "${flags[@]}" | tee "$results/$module.json" | python3 -u "$root/infra/testing/print-go-test-output.py"); then status=1; fi
-    printf 'Результаты: %s\n' "$results/$module.json"
-  fi
+  if ! (cd "$workdir" && go test -json "${flags[@]}" | tee "$results/$module.json" | python3 -u "$root/infra/testing/print-go-test-output.py"); then status=1; fi
+  printf 'Результаты: %s\n' "$results/$module.json"
   if [[ -s "$results/$module.json" ]]; then
     python3 "$root/infra/testing/render-go-report.py" "$results/$module.json" "$results/$module.tests.html" || status=1
   fi

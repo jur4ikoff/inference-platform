@@ -22,7 +22,6 @@ import (
 // Техника: классы эквивалентности идентификаторов моделей и проектов.
 func TestModelsAreIdentifiedByIDWithinProject(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		databaseURL := os.Getenv("MODEL_TEST_DATABASE_URL")
 		if databaseURL == "" {
 			t.Skip("set MODEL_TEST_DATABASE_URL to run PostgreSQL integration tests")
@@ -144,7 +143,6 @@ func TestModelsAreIdentifiedByIDWithinProject(t *testing.T) {
 				allureCtx.Errorf("start invalid selector: %v", err)
 			}
 		}
-
 	})
 }
 
@@ -187,12 +185,10 @@ func (*runtimeSpy) GetActiveDeployments(context.Context, string) ([]domain.Deplo
 // Техника: классы эквивалентности результата запроса и ошибки зависимости.
 func TestModelRepositoryUnit(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, method := range []string{"create", "get", "list", "update", "delete"} {
 			for _, scenario := range []string{"success", "missing", "database error"} {
 				t.Run(method+"/"+scenario, func(t *testing.T) {
 					allure.Wrap(t, func(allureCtx *allure.Context) {
-
 						model := testutil.NewModelBuilder().WithName("encoded-model").Build()
 						id := uuid.MustParse(model.ID)
 						saved := []any{pgtype.UUID{Bytes: id, Valid: true}, pgtype.Timestamptz{Time: model.CreatedAt, Valid: true}, pgtype.Timestamptz{Time: model.UpdatedAt, Valid: true}, model.Name, model.Description, model.Username, model.Project, []byte(`{"provider_type":"HUGGING_FACE","provider_hugging_face":{"repo":"org/model"}}`)}
@@ -270,23 +266,19 @@ func TestModelRepositoryUnit(t *testing.T) {
 						if scenario == "success" && (err != nil || (method != "delete" && method != "list" && got.ID != model.ID)) {
 							allureCtx.Fatalf("model=%+v err=%v", got, err)
 						}
-
 					})
 				})
 			}
 		}
-
 	})
 }
 
 // Техника: классы эквивалентности ошибок при чтении набора строк.
 func TestModelListReadErrors(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		for _, scenario := range []string{"scan", "iteration"} {
 			t.Run(scenario, func(t *testing.T) {
 				allure.Wrap(t, func(allureCtx *allure.Context) {
-
 					failure := errors.New("read failed")
 					rows := &testutil.Rows{Data: [][]any{{}}}
 					if scenario == "scan" {
@@ -300,18 +292,15 @@ func TestModelListReadErrors(t *testing.T) {
 					if !errors.Is(err, failure) || !rows.Closed {
 						allureCtx.Fatalf("err=%v closed=%v", err, rows.Closed)
 					}
-
 				})
 			})
 		}
-
 	})
 }
 
 // Техника: класс конфликта уникального имени модели.
 func TestModelCreateDuplicate(t *testing.T) {
 	allure.Wrap(t, func(allureCtx *allure.Context) {
-
 		db := &testutil.MockDBTX{QueryRowFunc: func(context.Context, string, ...interface{}) pgx.Row {
 			return testutil.Row{Err: &pgconn.PgError{Code: "23505", ConstraintName: "models_project_name_key"}}
 		}}
@@ -319,6 +308,5 @@ func TestModelCreateDuplicate(t *testing.T) {
 		if !errors.Is(err, domain.ErrModelAlreadyExists) {
 			allureCtx.Fatalf("err=%v", err)
 		}
-
 	})
 }

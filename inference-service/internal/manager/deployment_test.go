@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"errors"
+	allure "github.com/allure-framework/allure-go/commons/gotest"
 	"github.com/containerd/errdefs"
 	"github.com/google/uuid"
 	"github.com/jur4ikoff/inference-service/internal/config"
@@ -23,245 +24,267 @@ func managerConfig() config.DeploymentManagerConfig {
 
 // Техника: тестирование переходов состояний контейнера.
 func TestReconcileActualContainerStates(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		previous domain.Status
-		state    *container.State
-		failure  error
-		want     domain.Status
-	}{
-		{"running", domain.StatusPending, &container.State{Running: true}, nil, domain.StatusStarted},
-		{"created", domain.StatusPending, &container.State{Status: container.StateCreated}, nil, domain.StatusPending},
-		{"exited", domain.StatusStarted, &container.State{Status: container.StateExited}, nil, domain.StatusStopped},
-		{"restarting", domain.StatusStarted, &container.State{Running: true, Restarting: true}, nil, domain.StatusStopping},
-		{"removing", domain.StatusStarted, &container.State{Status: container.StateRemoving}, nil, domain.StatusStopping},
-		{"stop in progress", domain.StatusStopping, &container.State{Running: true}, nil, domain.StatusStopping},
-		{"ready model", domain.StatusRunning, &container.State{Running: true}, nil, domain.StatusRunning},
-		{"removed", domain.StatusStarted, nil, errdefs.ErrNotFound, domain.StatusStopped},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			repo := newMemoryRepository(test.previous)
-			runtime := &memoryRuntime{state: test.state, failure: test.failure}
-			m, err := NewDeploymentManager(repo, runtime, nil, managerConfig())
-			if err != nil {
-				t.Fatal(err)
-			}
-			err = m.Reconcile(t.Context())
-			if err != nil || repo.current().Status != test.want {
-				t.Fatalf("status=%s error=%v, want %s", repo.current().Status, err, test.want)
-			}
-		})
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		for _, test := range []struct {
+			name     string
+			previous domain.Status
+			state    *container.State
+			failure  error
+			want     domain.Status
+		}{
+			{"running", domain.StatusPending, &container.State{Running: true}, nil, domain.StatusStarted},
+			{"created", domain.StatusPending, &container.State{Status: container.StateCreated}, nil, domain.StatusPending},
+			{"exited", domain.StatusStarted, &container.State{Status: container.StateExited}, nil, domain.StatusStopped},
+			{"restarting", domain.StatusStarted, &container.State{Running: true, Restarting: true}, nil, domain.StatusStopping},
+			{"removing", domain.StatusStarted, &container.State{Status: container.StateRemoving}, nil, domain.StatusStopping},
+			{"stop in progress", domain.StatusStopping, &container.State{Running: true}, nil, domain.StatusStopping},
+			{"ready model", domain.StatusRunning, &container.State{Running: true}, nil, domain.StatusRunning},
+			{"removed", domain.StatusStarted, nil, errdefs.ErrNotFound, domain.StatusStopped},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				allure.Wrap(t, func(allureCtx *allure.Context) {
+					repo := newMemoryRepository(test.previous)
+					runtime := &memoryRuntime{state: test.state, failure: test.failure}
+					m, err := NewDeploymentManager(repo, runtime, nil, managerConfig())
+					if err != nil {
+						allureCtx.Fatal(err)
+					}
+					err = m.Reconcile(t.Context())
+					if err != nil || repo.current().Status != test.want {
+						allureCtx.Fatalf("status=%s error=%v, want %s", repo.current().Status, err, test.want)
+					}
+				})
+			})
+		}
+	})
 }
 
 // Техника: разбиение на классы эквивалентности; случай ошибки Docker при сверке состояния.
 func TestReconcileReportsDockerError(t *testing.T) {
-	repo := newMemoryRepository(domain.StatusStarted)
-	failure := errors.New("Docker unavailable")
-	manager, err := NewDeploymentManager(repo, &memoryRuntime{failure: failure}, nil, managerConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.Reconcile(t.Context()); !errors.Is(err, failure) {
-		t.Fatalf("err=%v", err)
-	}
-	if repo.current().Status != domain.StatusStarted {
-		t.Fatal("status changed after Docker error")
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		repo := newMemoryRepository(domain.StatusStarted)
+		failure := errors.New("Docker unavailable")
+		manager, err := NewDeploymentManager(repo, &memoryRuntime{failure: failure}, nil, managerConfig())
+		if err != nil {
+			allureCtx.Fatal(err)
+		}
+		if err := manager.Reconcile(t.Context()); !errors.Is(err, failure) {
+			allureCtx.Fatalf("err=%v", err)
+		}
+		if repo.current().Status != domain.StatusStarted {
+			allureCtx.Fatal("status changed after Docker error")
+		}
+	})
 }
 
 // Техника: разбиение на классы эквивалентности; случай ответа Docker без состояния контейнера.
 func TestReconcileRejectsMissingContainerState(t *testing.T) {
-	repo := newMemoryRepository(domain.StatusStarted)
-	manager, err := NewDeploymentManager(repo, &memoryRuntime{}, nil, managerConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.Reconcile(t.Context()); err == nil {
-		t.Fatal("missing state accepted")
-	}
-	if repo.current().Status != domain.StatusStarted {
-		t.Fatal("status changed after missing state")
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		repo := newMemoryRepository(domain.StatusStarted)
+		manager, err := NewDeploymentManager(repo, &memoryRuntime{}, nil, managerConfig())
+		if err != nil {
+			allureCtx.Fatal(err)
+		}
+		if err := manager.Reconcile(t.Context()); err == nil {
+			allureCtx.Fatal("missing state accepted")
+		}
+		if repo.current().Status != domain.StatusStarted {
+			allureCtx.Fatal("status changed after missing state")
+		}
+	})
 }
 
 // Техника: тестирование переходов состояний с учётом устаревших событий.
 func TestStoppingSignalsAndStaleEvents(t *testing.T) {
-	now := time.Now().UTC()
-	for _, test := range []struct {
-		name, signal, stopSignal string
-		eventTime                time.Time
-		want                     domain.Status
-	}{
-		{"SIGTERM", "15", "", now, domain.StatusStopping},
-		{"SIGKILL", "SIGKILL", "", now, domain.StatusStopping},
-		{"custom stop signal", "SIGUSR1", "SIGUSR1", now, domain.StatusStopping},
-		{"numeric custom stop signal", "10", "SIGUSR1", now, domain.StatusStopping},
-		{"non-terminating signal", "SIGUSR1", "", now, domain.StatusStarted},
-		{"old termination event", "15", "", now.Add(-time.Hour), domain.StatusStarted},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			repo := newMemoryRepository(domain.StatusStarted)
-			runtime := &memoryRuntime{state: &container.State{Running: true, StartedAt: now.Add(-time.Minute).Format(time.RFC3339Nano)}, stopSignal: test.stopSignal}
-			m, _ := NewDeploymentManager(repo, runtime, nil, managerConfig())
-			event := containerEvent(events.ActionKill)
-			event.Actor.Attributes = map[string]string{"signal": test.signal}
-			event.TimeNano = test.eventTime.UnixNano()
-			if err := m.HandleEvent(t.Context(), event); err != nil {
-				t.Fatal(err)
-			}
-			if got := repo.current().Status; got != test.want {
-				t.Fatalf("got %s, want %s", got, test.want)
-			}
-		})
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		now := time.Now().UTC()
+		for _, test := range []struct {
+			name, signal, stopSignal string
+			eventTime                time.Time
+			want                     domain.Status
+		}{
+			{"SIGTERM", "15", "", now, domain.StatusStopping},
+			{"SIGKILL", "SIGKILL", "", now, domain.StatusStopping},
+			{"custom stop signal", "SIGUSR1", "SIGUSR1", now, domain.StatusStopping},
+			{"numeric custom stop signal", "10", "SIGUSR1", now, domain.StatusStopping},
+			{"non-terminating signal", "SIGUSR1", "", now, domain.StatusStarted},
+			{"old termination event", "15", "", now.Add(-time.Hour), domain.StatusStarted},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				allure.Wrap(t, func(allureCtx *allure.Context) {
+					repo := newMemoryRepository(domain.StatusStarted)
+					runtime := &memoryRuntime{state: &container.State{Running: true, StartedAt: now.Add(-time.Minute).Format(time.RFC3339Nano)}, stopSignal: test.stopSignal}
+					m, _ := NewDeploymentManager(repo, runtime, nil, managerConfig())
+					event := containerEvent(events.ActionKill)
+					event.Actor.Attributes = map[string]string{"signal": test.signal}
+					event.TimeNano = test.eventTime.UnixNano()
+					if err := m.HandleEvent(t.Context(), event); err != nil {
+						allureCtx.Fatal(err)
+					}
+					if got := repo.current().Status; got != test.want {
+						allureCtx.Fatalf("got %s, want %s", got, test.want)
+					}
+				})
+			})
+		}
+	})
 }
 
 // Техника: тестирование переходов состояний при задержанном событии.
 func TestLateStopEventDoesNotOverwriteRestart(t *testing.T) {
-	repo := newMemoryRepository(domain.StatusStopped)
-	runtime := &memoryRuntime{state: &container.State{Running: true}}
-	m, _ := NewDeploymentManager(repo, runtime, nil, managerConfig())
-	if err := m.HandleEvent(t.Context(), containerEvent(events.ActionStop)); err != nil {
-		t.Fatal(err)
-	}
-	if repo.current().Status != domain.StatusStarted {
-		t.Fatal("manager must inspect the current state before applying a delayed stop event")
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		repo := newMemoryRepository(domain.StatusStopped)
+		runtime := &memoryRuntime{state: &container.State{Running: true}}
+		m, _ := NewDeploymentManager(repo, runtime, nil, managerConfig())
+		if err := m.HandleEvent(t.Context(), containerEvent(events.ActionStop)); err != nil {
+			allureCtx.Fatal(err)
+		}
+		if repo.current().Status != domain.StatusStarted {
+			allureCtx.Fatal("manager must inspect the current state before applying a delayed stop event")
+		}
+	})
 }
 
 // Техника: разбиение на классы эквивалентности; случай отсутствующего deployment.
 func TestUnknownDeploymentIsIgnored(t *testing.T) {
-	repo := newMemoryRepository(domain.StatusPending)
-	repo.getErr = domain.ErrDeploymentNotFound
-	runtime := &memoryRuntime{failure: errors.New("must not inspect")}
-	m, _ := NewDeploymentManager(repo, runtime, nil, managerConfig())
-	if err := m.HandleEvent(t.Context(), containerEvent(events.ActionStart)); err != nil {
-		t.Fatal(err)
-	}
-	if repo.current().Status != domain.StatusPending {
-		t.Fatal("an unknown deployment was updated")
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		repo := newMemoryRepository(domain.StatusPending)
+		repo.getErr = domain.ErrDeploymentNotFound
+		runtime := &memoryRuntime{failure: errors.New("must not inspect")}
+		m, _ := NewDeploymentManager(repo, runtime, nil, managerConfig())
+		if err := m.HandleEvent(t.Context(), containerEvent(events.ActionStart)); err != nil {
+			allureCtx.Fatal(err)
+		}
+		if repo.current().Status != domain.StatusPending {
+			allureCtx.Fatal("an unknown deployment was updated")
+		}
+	})
 }
 
 // Техника: тестирование переходов состояний по последовательности событий контейнера.
 func TestRunUpdatesDeploymentStatusesFromContainerEvents(t *testing.T) {
-	repo := newMemoryRepository(domain.StatusPending)
-	inspected := make(chan struct{}, 8)
-	runtime := &memoryRuntime{state: &container.State{Status: container.StateCreated}, inspected: inspected}
-	messages := make(chan events.Message)
-	streamErrors := make(chan error)
-	connected := make(chan string, 4)
-	runtime.watch = func(ctx context.Context, since string) client.EventsResult {
-		connected <- since
-		return client.EventsResult{Messages: messages, Err: streamErrors}
-	}
-	cfg := managerConfig()
-	cfg.OperationTimeout = time.Hour
-	m, _ := NewDeploymentManager(repo, runtime, nil, cfg)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- m.Run(ctx) }()
-	receive(t, connected)
-	receive(t, inspected)
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		repo := newMemoryRepository(domain.StatusPending)
+		inspected := make(chan struct{}, 8)
+		runtime := &memoryRuntime{state: &container.State{Status: container.StateCreated}, inspected: inspected}
+		messages := make(chan events.Message)
+		streamErrors := make(chan error)
+		connected := make(chan string, 4)
+		runtime.watch = func(ctx context.Context, since string) client.EventsResult {
+			connected <- since
+			return client.EventsResult{Messages: messages, Err: streamErrors}
+		}
+		cfg := managerConfig()
+		cfg.OperationTimeout = time.Hour
+		m, _ := NewDeploymentManager(repo, runtime, nil, cfg)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- m.Run(ctx) }()
+		receive(allureCtx, connected)
+		receive(allureCtx, inspected)
 
-	start := containerEvent(events.ActionStart)
-	start.TimeNano = time.Now().Add(time.Second).UnixNano()
-	runtime.setState(&container.State{Running: true})
-	send(t, messages, start)
-	if got := receive(t, repo.updates); got != domain.StatusStarted {
-		t.Fatalf("got %s, want STARTED", got)
-	}
-	kill := containerEvent(events.ActionKill)
-	kill.Actor.Attributes = map[string]string{"signal": "15"}
-	send(t, messages, kill)
-	if got := receive(t, repo.updates); got != domain.StatusStopping {
-		t.Fatalf("got %s, want STOPPING", got)
-	}
-	runtime.setState(&container.State{Status: container.StateExited})
-	send(t, messages, containerEvent(events.ActionDie))
-	if got := receive(t, repo.updates); got != domain.StatusStopped {
-		t.Fatalf("got %s, want STOPPED", got)
-	}
-	cancel()
-	if err := receive(t, done); err != nil {
-		t.Fatal(err)
-	}
+		start := containerEvent(events.ActionStart)
+		start.TimeNano = time.Now().Add(time.Second).UnixNano()
+		runtime.setState(&container.State{Running: true})
+		send(allureCtx, messages, start)
+		if got := receive(allureCtx, repo.updates); got != domain.StatusStarted {
+			allureCtx.Fatalf("got %s, want STARTED", got)
+		}
+		kill := containerEvent(events.ActionKill)
+		kill.Actor.Attributes = map[string]string{"signal": "15"}
+		send(allureCtx, messages, kill)
+		if got := receive(allureCtx, repo.updates); got != domain.StatusStopping {
+			allureCtx.Fatalf("got %s, want STOPPING", got)
+		}
+		runtime.setState(&container.State{Status: container.StateExited})
+		send(allureCtx, messages, containerEvent(events.ActionDie))
+		if got := receive(allureCtx, repo.updates); got != domain.StatusStopped {
+			allureCtx.Fatalf("got %s, want STOPPED", got)
+		}
+		cancel()
+		if err := receive(allureCtx, done); err != nil {
+			allureCtx.Fatal(err)
+		}
+	})
 }
 
 // Техника: тестирование переходов состояний; переход подключения после разрыва потока событий.
 func TestRunReconnectsFromLastEvent(t *testing.T) {
-	repo := newMemoryRepository(domain.StatusPending)
-	inspected := make(chan struct{}, 2)
-	runtime := &memoryRuntime{state: &container.State{Status: container.StateCreated}, inspected: inspected}
-	messages := make(chan events.Message)
-	streamErrors := make(chan error)
-	connected := make(chan string, 4)
-	runtime.watch = func(_ context.Context, since string) client.EventsResult {
-		connected <- since
-		return client.EventsResult{Messages: messages, Err: streamErrors}
-	}
-	cfg := managerConfig()
-	cfg.OperationTimeout = time.Hour
-	manager, err := NewDeploymentManager(repo, runtime, nil, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- manager.Run(ctx) }()
-	receive(t, connected)
-	receive(t, inspected)
-	event := containerEvent(events.ActionStart)
-	event.TimeNano = time.Now().Add(time.Second).UnixNano()
-	runtime.setState(&container.State{Running: true})
-	send(t, messages, event)
-	if got := receive(t, repo.updates); got != domain.StatusStarted {
-		t.Fatalf("status=%s", got)
-	}
-	send[error](t, streamErrors, io.EOF)
-	if cursor := receive(t, connected); cursor != eventTime(event).Format(time.RFC3339Nano) {
-		t.Fatalf("reconnect cursor=%s", cursor)
-	}
-	cancel()
-	if err := receive(t, done); err != nil {
-		t.Fatal(err)
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		repo := newMemoryRepository(domain.StatusPending)
+		inspected := make(chan struct{}, 2)
+		runtime := &memoryRuntime{state: &container.State{Status: container.StateCreated}, inspected: inspected}
+		messages := make(chan events.Message)
+		streamErrors := make(chan error)
+		connected := make(chan string, 4)
+		runtime.watch = func(_ context.Context, since string) client.EventsResult {
+			connected <- since
+			return client.EventsResult{Messages: messages, Err: streamErrors}
+		}
+		cfg := managerConfig()
+		cfg.OperationTimeout = time.Hour
+		manager, err := NewDeploymentManager(repo, runtime, nil, cfg)
+		if err != nil {
+			allureCtx.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- manager.Run(ctx) }()
+		receive(allureCtx, connected)
+		receive(allureCtx, inspected)
+		event := containerEvent(events.ActionStart)
+		event.TimeNano = time.Now().Add(time.Second).UnixNano()
+		runtime.setState(&container.State{Running: true})
+		send(allureCtx, messages, event)
+		if got := receive(allureCtx, repo.updates); got != domain.StatusStarted {
+			allureCtx.Fatalf("status=%s", got)
+		}
+		send[error](allureCtx, streamErrors, io.EOF)
+		if cursor := receive(allureCtx, connected); cursor != eventTime(event).Format(time.RFC3339Nano) {
+			allureCtx.Fatalf("reconnect cursor=%s", cursor)
+		}
+		cancel()
+		if err := receive(allureCtx, done); err != nil {
+			allureCtx.Fatal(err)
+		}
+	})
 }
 
 // Техника: разбиение на классы эквивалентности; случай блокированного подключения при отмене.
 func TestBlockedSubscriptionIsCanceled(t *testing.T) {
-	repo := newMemoryRepository(domain.StatusPending)
-	watchStarted := make(chan struct{})
-	watchCanceled := make(chan struct{})
-	runtime := &memoryRuntime{watch: func(ctx context.Context, _ string) client.EventsResult {
-		close(watchStarted)
-		<-ctx.Done()
-		close(watchCanceled)
-		return client.EventsResult{}
-	}}
-	cfg := managerConfig()
-	cfg.OperationTimeout = time.Hour
-	m, _ := NewDeploymentManager(repo, runtime, nil, cfg)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- m.Run(ctx) }()
-	receive(t, watchStarted)
-	cancel()
-	if err := receive(t, done); err != nil {
-		t.Fatal(err)
-	}
-	receive(t, watchCanceled)
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		repo := newMemoryRepository(domain.StatusPending)
+		watchStarted := make(chan struct{})
+		watchCanceled := make(chan struct{})
+		runtime := &memoryRuntime{watch: func(ctx context.Context, _ string) client.EventsResult {
+			close(watchStarted)
+			<-ctx.Done()
+			close(watchCanceled)
+			return client.EventsResult{}
+		}}
+		cfg := managerConfig()
+		cfg.OperationTimeout = time.Hour
+		m, _ := NewDeploymentManager(repo, runtime, nil, cfg)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- m.Run(ctx) }()
+		receive(allureCtx, watchStarted)
+		cancel()
+		if err := receive(allureCtx, done); err != nil {
+			allureCtx.Fatal(err)
+		}
+		receive(allureCtx, watchCanceled)
+	})
 }
 
 func containerEvent(action events.Action) events.Message {
 	return events.Message{Type: events.ContainerEventType, Action: action, Actor: events.Actor{ID: "docker-id"}}
 }
 
-func receive[T any](t *testing.T, ch <-chan T) T {
+func receive[T any](t *allure.Context, ch <-chan T) T {
 	t.Helper()
 	select {
 	case value := <-ch:
@@ -273,7 +296,7 @@ func receive[T any](t *testing.T, ch <-chan T) T {
 	}
 }
 
-func send[T any](t *testing.T, ch chan<- T, value T) {
+func send[T any](t *allure.Context, ch chan<- T, value T) {
 	t.Helper()
 	select {
 	case ch <- value:
@@ -359,58 +382,66 @@ func (r *memoryRuntime) ContainerEndpoint(client.ContainerInspectResult) (string
 
 // Техника: тестирование переходов состояний при отмене.
 func TestManagerCancellationKeepsRunningDeployment(t *testing.T) {
-	repo := newMemoryRepository(domain.StatusStarted)
-	inspected := make(chan struct{}, 1)
-	runtime := &memoryRuntime{state: &container.State{Running: true}, inspected: inspected}
-	runtime.watch = func(ctx context.Context, _ string) client.EventsResult {
-		return client.EventsResult{Messages: make(chan events.Message), Err: make(chan error)}
-	}
-	m, err := NewDeploymentManager(repo, runtime, nil, managerConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan error, 1)
-	go func() { done <- m.Run(ctx) }()
-	receive(t, inspected)
-	cancel()
-	if err := receive(t, done); err != nil {
-		t.Fatal(err)
-	}
-	if repo.current().Status != domain.StatusStarted || !runtime.state.Running {
-		t.Fatal("manager cancellation changed a running deployment")
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		repo := newMemoryRepository(domain.StatusStarted)
+		inspected := make(chan struct{}, 1)
+		runtime := &memoryRuntime{state: &container.State{Running: true}, inspected: inspected}
+		runtime.watch = func(ctx context.Context, _ string) client.EventsResult {
+			return client.EventsResult{Messages: make(chan events.Message), Err: make(chan error)}
+		}
+		m, err := NewDeploymentManager(repo, runtime, nil, managerConfig())
+		if err != nil {
+			allureCtx.Fatal(err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		done := make(chan error, 1)
+		go func() { done <- m.Run(ctx) }()
+		receive(allureCtx, inspected)
+		cancel()
+		if err := receive(allureCtx, done); err != nil {
+			allureCtx.Fatal(err)
+		}
+		if repo.current().Status != domain.StatusStarted || !runtime.state.Running {
+			allureCtx.Fatal("manager cancellation changed a running deployment")
+		}
+	})
 }
 
 // Техника: разбиение на классы эквивалентности; случай успешного чтения состояний.
 func TestManagerInitPrunesRoutes(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	repo := NewMockManagerRepository(ctrl)
-	routes := NewMockRouteRegistry(ctrl)
-	repo.EXPECT().ListDeploymentStates(gomock.Any()).Return(nil, nil)
-	routes.EXPECT().Prune([]domain.DeploymentState(nil))
-	svc, err := NewDeploymentManager(repo, NewMockManagerRuntime(ctrl), routes, managerConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.Init(t.Context()); err != nil {
-		t.Fatal(err)
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		ctrl := gomock.NewController(allureCtx)
+		defer ctrl.Finish()
+		repo := NewMockManagerRepository(ctrl)
+		routes := NewMockRouteRegistry(ctrl)
+		repo.EXPECT().ListDeploymentStates(gomock.Any()).Return(nil, nil)
+		routes.EXPECT().Prune([]domain.DeploymentState(nil))
+		svc, err := NewDeploymentManager(repo, NewMockManagerRuntime(ctrl), routes, managerConfig())
+		if err != nil {
+			allureCtx.Fatal(err)
+		}
+		if err := svc.Init(t.Context()); err != nil {
+			allureCtx.Fatal(err)
+		}
+	})
 }
 
 // Техника: разбиение на классы эквивалентности; случай ошибки зависимости при чтении состояний.
 func TestManagerInitReportsRepositoryError(t *testing.T) {
-	failure := errors.New("database unavailable")
-	ctrl := gomock.NewController(t)
-	repo := NewMockManagerRepository(ctrl)
-	repo.EXPECT().ListDeploymentStates(gomock.Any()).Return(nil, failure)
-	svc, err := NewDeploymentManager(repo, NewMockManagerRuntime(ctrl), NewMockRouteRegistry(ctrl), managerConfig())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.Init(t.Context()); !errors.Is(err, failure) {
-		t.Fatalf("err=%v", err)
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+		failure := errors.New("database unavailable")
+		ctrl := gomock.NewController(allureCtx)
+		defer ctrl.Finish()
+		repo := NewMockManagerRepository(ctrl)
+		repo.EXPECT().ListDeploymentStates(gomock.Any()).Return(nil, failure)
+		svc, err := NewDeploymentManager(repo, NewMockManagerRuntime(ctrl), NewMockRouteRegistry(ctrl), managerConfig())
+		if err != nil {
+			allureCtx.Fatal(err)
+		}
+		if err := svc.Init(t.Context()); !errors.Is(err, failure) {
+			allureCtx.Fatalf("err=%v", err)
+		}
+	})
 }
 
 var _ DeploymentRepository = (*MockManagerRepository)(nil)
