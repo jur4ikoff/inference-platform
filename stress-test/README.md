@@ -10,18 +10,18 @@
 а не заявленные показатели production-системы.
 
 Сценарий: `GET /api/v1/projects/stress-test/models?offset=0&limit=20` с JWT
-администратора через Nginx. Запросы распределяются между тремя экземплярами
-model-service с весами 2:1:1. Проект `stress-test` выбран как пустая выборка;
+администратора через Nginx. Запросы направляются в единственный экземпляр
+model-service. Проект `stress-test` выбран как пустая выборка;
 тест не создаёт и не изменяет данные. При пустом списке модели не загружаются
 и вызов inference-service за статусами развёртываний не выполняется.
 
 ## Запуск
 
-Нужны работающие Nginx, три экземпляра model-service, PostgreSQL и user-service
+Нужны работающие Nginx, model-service, PostgreSQL и user-service
 для JWKS. Locust 2.32.10 запускается в контейнере. Он один раз авторизуется
 перед началом теста с `BOOTSTRAP_ADMIN_LOGIN` и `BOOTSTRAP_ADMIN_PASSWORD`
 из `infra/.env` и использует полученный токен для запросов к model-service.
-Master и workers совместно используют кэш `stress-test/docker-results/.login-cache.json`.
+Locust сохраняет результат авторизации в `stress-test/docker-results/.login-cache.json`.
 Через пять минут результат login обновляется, в том числе во время долгого теста.
 `make locust` создаёт начального администратора, если его ещё нет.
 
@@ -38,8 +38,7 @@ make locust
 ```
 
 Команда запускает PostgreSQL, применяет миграции, создаёт администратора,
-поднимает сервисы, Locust UI и два worker-процесса. Число workers можно
-изменить, например `make locust LOCUST_WORKERS=6`. Если `stress-test/.env` отсутствует, команда
+поднимает по одному экземпляру сервисов и Locust UI. Если `stress-test/.env` отсутствует, команда
 создаёт его из примера. Для bootstrap администратора необходим Go; если
 администратор уже существует, его пароль не обновляется автоматически.
 
@@ -49,7 +48,7 @@ make locust
 
 ```sh
 docker compose --env-file infra/.env --env-file stress-test/.env \
-  -f stress-test/docker-compose.yaml stop locust-ui locust-worker
+  -f stress-test/docker-compose.yaml stop locust-ui
 ```
 
 Контейнер подключается к сети `inference-platform_default` и отправляет запросы
@@ -60,6 +59,10 @@ docker compose --env-file infra/.env --env-file stress-test/.env \
 сетевого пути приведённого ниже прогона; результаты напрямую не сопоставимы.
 
 ## Конфигурация и результаты
+
+Ниже приведён исторический прогон с прежней конфигурацией из трёх экземпляров
+model-service. В текущей конфигурации работает один экземпляр; эти результаты
+не описывают её производительность.
 
 Тест выполнен 9 ноября 2026 года на локальной машине macOS ARM64. Locust
 2.32.10 работал на хосте под Python 3.13.7. Nginx, три экземпляра

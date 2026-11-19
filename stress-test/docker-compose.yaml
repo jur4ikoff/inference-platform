@@ -40,25 +40,6 @@ services:
       - http://nginx:80
       - --web-host
       - 0.0.0.0
-      - --master
-
-  locust-worker:
-    extends:
-      service: locust
-    deploy:
-      replicas: ${LOCUST_WORKERS:-2}
-    cpus: ${LOCUST_WORKER_CPUS:-1.0}
-    mem_limit: ${LOCUST_WORKER_MEMORY_LIMIT:-512m}
-    depends_on:
-      - locust-ui
-    command:
-      - -f
-      - /mnt/locust/locustfile.py
-      - --host
-      - http://nginx:80
-      - --worker
-      - --master-host
-      - locust-ui
 
 networks:
   platform:

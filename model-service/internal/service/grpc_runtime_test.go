@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	allure "github.com/allure-framework/allure-go/commons/gotest"
 	inferencev1 "github.com/jur4ikoff/internal-api/gen/go/inference/v1"
 	"github.com/jur4ikoff/model-service/internal/domain"
 	"github.com/jur4ikoff/model-service/internal/testutil"
@@ -33,14 +34,18 @@ func (c *historyClient) ListAllDeployments(_ context.Context, req *inferencev1.L
 
 // Техника: классы эквивалентности проектов и переходы между страницами.
 func TestGetDeploymentsHistoryFiltersProjectAcrossPages(t *testing.T) {
-	client := &historyClient{}
-	result, err := NewGRPCModelRuntime(client).GetDeploymentsHistory(context.Background(), "demo")
-	if err != nil || client.calls != 2 || len(result) != 2 {
-		t.Fatalf("history=%+v calls=%d err=%v", result, client.calls, err)
-	}
-	if result[0].ID != "first" || result[0].Username != "alice" || result[0].Status != "stopped" || result[0].StartedAt == nil || result[0].StartedAt.Unix() != 100 || result[0].UpdatedAt == nil || result[0].UpdatedAt.Unix() != 200 || result[1].ID != "second" || result[1].Status != "failed" {
-		t.Fatalf("unexpected history: %+v", result)
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+
+		client := &historyClient{}
+		result, err := NewGRPCModelRuntime(client).GetDeploymentsHistory(context.Background(), "demo")
+		if err != nil || client.calls != 2 || len(result) != 2 {
+			allureCtx.Fatalf("history=%+v calls=%d err=%v", result, client.calls, err)
+		}
+		if result[0].ID != "first" || result[0].Username != "alice" || result[0].Status != "stopped" || result[0].StartedAt == nil || result[0].StartedAt.Unix() != 100 || result[0].UpdatedAt == nil || result[0].UpdatedAt.Unix() != 200 || result[1].ID != "second" || result[1].Status != "failed" {
+			allureCtx.Fatalf("unexpected history: %+v", result)
+		}
+
+	})
 }
 
 func (c *historyClient) ListDeployments(_ context.Context, req *inferencev1.ListDeploymentsRequest, _ ...grpc.CallOption) (*inferencev1.ListDeploymentsResponse, error) {
@@ -57,30 +62,42 @@ func (c *historyClient) ListDeployments(_ context.Context, req *inferencev1.List
 
 // Техника: классы эквивалентности проектов и переходы между страницами.
 func TestGetActiveDeploymentsFiltersProjectAcrossPages(t *testing.T) {
-	client := &historyClient{}
-	result, err := NewGRPCModelRuntime(client).GetActiveDeployments(context.Background(), "demo")
-	if err != nil || client.calls != 2 || len(result) != 2 {
-		t.Fatalf("deployments=%+v calls=%d err=%v", result, client.calls, err)
-	}
-	if result[0].ID != "first" || result[0].Username != "alice" || result[0].Status != "starting" || result[1].ID != "second" || result[1].Status != "running" {
-		t.Fatalf("unexpected deployments: %+v", result)
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+
+		client := &historyClient{}
+		result, err := NewGRPCModelRuntime(client).GetActiveDeployments(context.Background(), "demo")
+		if err != nil || client.calls != 2 || len(result) != 2 {
+			allureCtx.Fatalf("deployments=%+v calls=%d err=%v", result, client.calls, err)
+		}
+		if result[0].ID != "first" || result[0].Username != "alice" || result[0].Status != "starting" || result[1].ID != "second" || result[1].Status != "running" {
+			allureCtx.Fatalf("unexpected deployments: %+v", result)
+		}
+
+	})
 }
 
 // Техника: классы эквивалентности идентификаторов модели и проекта.
 func TestGetDeploymentUsesModelIDAndProject(t *testing.T) {
-	for _, tc := range []struct {
-		project string
-		want    error
-	}{{"demo", nil}, {"other", ErrDeploymentNotFound}} {
-		t.Run(tc.project, func(t *testing.T) {
-			runtime := NewGRPCModelRuntime(&historyClient{})
-			result, err := runtime.GetDeployment(context.Background(), domain.Model{ID: "target", Project: tc.project, Name: "name-without-container-suffix"})
-			if !errors.Is(err, tc.want) || (err == nil && result.ID != "first") {
-				t.Fatalf("deployment=%+v err=%v", result, err)
-			}
-		})
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+
+		for _, tc := range []struct {
+			project string
+			want    error
+		}{{"demo", nil}, {"other", ErrDeploymentNotFound}} {
+			t.Run(tc.project, func(t *testing.T) {
+				allure.Wrap(t, func(allureCtx *allure.Context) {
+
+					runtime := NewGRPCModelRuntime(&historyClient{})
+					result, err := runtime.GetDeployment(context.Background(), domain.Model{ID: "target", Project: tc.project, Name: "name-without-container-suffix"})
+					if !errors.Is(err, tc.want) || (err == nil && result.ID != "first") {
+						allureCtx.Fatalf("deployment=%+v err=%v", result, err)
+					}
+
+				})
+			})
+		}
+
+	})
 }
 
 type runtimeClient struct {
@@ -98,16 +115,20 @@ func (c *runtimeClient) StartDeployment(_ context.Context, request *inferencev1.
 }
 
 func TestCreateDeploymentUsesInitiatingUser(t *testing.T) {
-	client := &runtimeClient{}
-	runtime := NewGRPCModelRuntime(client)
-	model := testutil.ModelMother{}.HuggingFace()
-	model.Username = "model-owner"
-	if _, err := runtime.CreateDeployment(WithActor(context.Background(), "initiator"), model); err != nil {
-		t.Fatal(err)
-	}
-	if client.username != "initiator" {
-		t.Fatalf("deployment username = %q", client.username)
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+
+		client := &runtimeClient{}
+		runtime := NewGRPCModelRuntime(client)
+		model := testutil.ModelMother{}.HuggingFace()
+		model.Username = "model-owner"
+		if _, err := runtime.CreateDeployment(WithActor(context.Background(), "initiator"), model); err != nil {
+			allureCtx.Fatal(err)
+		}
+		if client.username != "initiator" {
+			allureCtx.Fatalf("deployment username = %q", client.username)
+		}
+
+	})
 }
 func (c *runtimeClient) StopDeployment(_ context.Context, _ *inferencev1.StopDeploymentRequest, _ ...grpc.CallOption) (*inferencev1.StopDeploymentResponse, error) {
 	return &inferencev1.StopDeploymentResponse{}, c.err
@@ -121,39 +142,47 @@ func (c *runtimeClient) ListAllDeployments(context.Context, *inferencev1.ListAll
 
 // Техника: классы эквивалентности успеха и ошибки RPC.
 func TestRuntimeCalls(t *testing.T) {
-	for _, method := range []string{"start", "create", "stop", "history", "active", "get"} {
-		for _, fail := range []bool{false, true} {
-			if !fail && (method == "history" || method == "active" || method == "get") {
-				continue
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+
+		for _, method := range []string{"start", "create", "stop", "history", "active", "get"} {
+			for _, fail := range []bool{false, true} {
+				if !fail && (method == "history" || method == "active" || method == "get") {
+					continue
+				}
+				t.Run(method+map[bool]string{true: "/failure", false: "/success"}[fail], func(t *testing.T) {
+					allure.Wrap(t, func(allureCtx *allure.Context) {
+
+						client := &runtimeClient{}
+						if fail {
+							client.err = status.Error(codes.Unavailable, "down")
+						}
+						r := NewGRPCModelRuntime(client)
+						model := testutil.ModelMother{}.HuggingFace()
+						var err error
+						switch method {
+						case "start":
+							err = r.Start(context.Background(), model)
+						case "create":
+							_, err = r.CreateDeployment(context.Background(), model)
+						case "stop":
+							err = r.StopDeployment(context.Background(), domain.Deployment{ID: "id"})
+						case "history":
+							_, err = r.GetDeploymentsHistory(context.Background(), "demo")
+						case "active":
+							_, err = r.GetActiveDeployments(context.Background(), "demo")
+						case "get":
+							_, err = r.GetDeployment(context.Background(), model)
+						}
+						if fail && !errors.Is(err, ErrRuntimeUnavailable) || !fail && err != nil {
+							allureCtx.Fatalf("err=%v", err)
+						}
+
+					})
+				})
 			}
-			t.Run(method+map[bool]string{true: "/failure", false: "/success"}[fail], func(t *testing.T) {
-				client := &runtimeClient{}
-				if fail {
-					client.err = status.Error(codes.Unavailable, "down")
-				}
-				r := NewGRPCModelRuntime(client)
-				model := testutil.ModelMother{}.HuggingFace()
-				var err error
-				switch method {
-				case "start":
-					err = r.Start(context.Background(), model)
-				case "create":
-					_, err = r.CreateDeployment(context.Background(), model)
-				case "stop":
-					err = r.StopDeployment(context.Background(), domain.Deployment{ID: "id"})
-				case "history":
-					_, err = r.GetDeploymentsHistory(context.Background(), "demo")
-				case "active":
-					_, err = r.GetActiveDeployments(context.Background(), "demo")
-				case "get":
-					_, err = r.GetDeployment(context.Background(), model)
-				}
-				if fail && !errors.Is(err, ErrRuntimeUnavailable) || !fail && err != nil {
-					t.Fatalf("err=%v", err)
-				}
-			})
 		}
-	}
+
+	})
 }
 
 type repeatedPageClient struct {
@@ -169,18 +198,26 @@ func (*repeatedPageClient) ListDeployments(context.Context, *inferencev1.ListDep
 
 // Техника: переходы между страницами с повторяющимся токеном.
 func TestRuntimeRepeatedPageToken(t *testing.T) {
-	for _, active := range []bool{true, false} {
-		t.Run(map[bool]string{true: "active", false: "history"}[active], func(t *testing.T) {
-			r := NewGRPCModelRuntime(&repeatedPageClient{})
-			var err error
-			if active {
-				_, err = r.GetActiveDeployments(context.Background(), "demo")
-			} else {
-				_, err = r.GetDeploymentsHistory(context.Background(), "demo")
-			}
-			if err == nil {
-				t.Fatal("repeated pagination token accepted")
-			}
-		})
-	}
+	allure.Wrap(t, func(allureCtx *allure.Context) {
+
+		for _, active := range []bool{true, false} {
+			t.Run(map[bool]string{true: "active", false: "history"}[active], func(t *testing.T) {
+				allure.Wrap(t, func(allureCtx *allure.Context) {
+
+					r := NewGRPCModelRuntime(&repeatedPageClient{})
+					var err error
+					if active {
+						_, err = r.GetActiveDeployments(context.Background(), "demo")
+					} else {
+						_, err = r.GetDeploymentsHistory(context.Background(), "demo")
+					}
+					if err == nil {
+						allureCtx.Fatal("repeated pagination token accepted")
+					}
+
+				})
+			})
+		}
+
+	})
 }

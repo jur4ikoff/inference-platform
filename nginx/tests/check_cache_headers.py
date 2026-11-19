@@ -19,7 +19,7 @@ def get(path, *, port=8000, headers=None):
 
 class CacheHeadersTest(unittest.TestCase):
     def test_public_assets_and_revalidation(self):
-        for path in ("/static/home.css", "/mirror/static/swagger/swagger-ui.css"):
+        for path in ("/static/home.css", "/static/swagger/swagger-ui.css"):
             with self.subTest(path=path):
                 status, headers, _ = get(path)
                 self.assertEqual(status, 200)
@@ -40,7 +40,7 @@ class CacheHeadersTest(unittest.TestCase):
         self.assertEqual(gzip.decompress(body), plain)
 
         status, headers, body = get(
-            "/mirror/api/v1/openapi.json", headers={"Accept-Encoding": "gzip"}
+            "/api/v1/openapi-model.json", headers={"Accept-Encoding": "gzip"}
         )
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("Content-Encoding"), "gzip")
@@ -58,7 +58,7 @@ class CacheHeadersTest(unittest.TestCase):
             (8000, "/"), (8000, "/management"), (8000, "/status"),
             (8000, "/status/data"), (8000, "/health"), (8000, "/ready"),
             (8000, "/admin"), (8000, "/api/v1/projects/ml/models"),
-            (8000, "/mirror/api/v1/openapi.json"),
+            (8000, "/api/v1/openapi-model.json"),
             (8000, "/static/management.html"), (8000, "/static/does-not-exist.css"),
             (8083, "/admin/"),
         )

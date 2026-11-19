@@ -182,7 +182,7 @@
         },
         {
           "refId": "B",
-          "expr": "100 * max without (job, instance) (platform_container_cpu_limit_cores{compose_service=~\"user-service(-ro-[12]|-mirror)?\"})",
+          "expr": "100 * max without (job, instance) (platform_container_cpu_limit_cores{compose_service=\"user-service\"})",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -234,7 +234,7 @@
         },
         {
           "refId": "B",
-          "expr": "max without (job, instance) (platform_container_memory_limit_bytes{compose_service=~\"user-service(-ro-[12]|-mirror)?\"})",
+          "expr": "max without (job, instance) (platform_container_memory_limit_bytes{compose_service=\"user-service\"})",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -541,7 +541,7 @@
         },
         {
           "refId": "B",
-          "expr": "100 * max without (job, instance) (platform_container_cpu_limit_cores{compose_service=~\"model-service.*\"})",
+          "expr": "100 * max without (job, instance) (platform_container_cpu_limit_cores{compose_service=\"model-service\"})",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -593,7 +593,7 @@
         },
         {
           "refId": "B",
-          "expr": "max without (job, instance) (platform_container_memory_limit_bytes{compose_service=~\"model-service.*\"})",
+          "expr": "max without (job, instance) (platform_container_memory_limit_bytes{compose_service=\"model-service\"})",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -722,7 +722,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "{service=~\"model-service.*\"}",
+          "expr": "{service=\"model-service\"}",
           "datasource": {
             "type": "loki",
             "uid": "loki"
@@ -900,7 +900,7 @@
         },
         {
           "refId": "B",
-          "expr": "100 * max without (job, instance) (platform_container_cpu_limit_cores{compose_service=~\"inference-service(-ro-[12]|-mirror)?\"})",
+          "expr": "100 * max without (job, instance) (platform_container_cpu_limit_cores{compose_service=\"inference-service\"})",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
@@ -952,7 +952,7 @@
         },
         {
           "refId": "B",
-          "expr": "max without (job, instance) (platform_container_memory_limit_bytes{compose_service=~\"inference-service(-ro-[12]|-mirror)?\"})",
+          "expr": "max without (job, instance) (platform_container_memory_limit_bytes{compose_service=\"inference-service\"})",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"

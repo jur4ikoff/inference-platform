@@ -101,13 +101,33 @@
 Нужны Go версии из `go.mod`, Docker с Compose и доступом к daemon. Один раз установите инструменты отчётов командой `make test-tools`; для этого нужен интернет. `gotestsum` создаёт JUnit XML и JSON, `gobco` измеряет покрытие условий, `gocover-cobertura` формирует метрику строк. Инструменты устанавливаются в `.test-tools/` и не изменяют зависимости сервисов. Allure Report 2 устанавливается отдельно.
 
 - `make test` последовательно запускает unit- и интеграционные тесты; для интеграционной части требуется Docker с доступной PostgreSQL.
-- `make test-unit` запускает тесты сервисов без `-short`, исключая интеграционные тесты PostgreSQL по префиксам имён в `infra/testing/run-go-tests.sh`. Новые интеграционные тесты `inference-service` должны начинаться с `TestDeploymentIntegration`. Результаты: `test-results/unit/`.
+- `make test-unit` запускает тесты сервисов без `-short`, исключая интеграционные тесты PostgreSQL по префиксам имён в `infra/testing/run-go-tests.sh`. Новые интеграционные тесты `inference-service` должны начинаться с `TestDeploymentIntegration`. Результаты: `test-results/unit/`, JUnit XML — в подкаталоге `junit/`.
 - `make test-integration` поднимает отдельный PostgreSQL и запускает интеграционные тесты репозиториев с явно заданными URL. Unit и интеграционные тесты deployment находятся в одном файле `inference-service/internal/repository/deployment_test.go`; интеграционные функции имеют префикс `TestDeploymentIntegration`, чтобы сценарий запуска мог отделить их от unit-тестов. Результаты: `test-results/integration/`. Порт по умолчанию 55432; изменить можно через `TEST_POSTGRES_PORT`. Тесты самостоятельно готовят изолированные временные таблицы или схему и применяют необходимые миграции.
 - `make test-db-down` останавливает тестовый стенд. Данные PostgreSQL хранятся в tmpfs и удаляются при остановке контейнера; приложение и его БД команда не затрагивает.
-- `make test-coverage` выполняет unit-тесты с покрытием операторов, сохраняет отчёты `.cover`, `.txt`, `.html`, Cobertura XML, JUnit XML и JSON в `test-results/coverage/`. Конвертер выводит в консоль количество покрытых и учтённых строк.
+- `make test-coverage` выполняет unit-тесты с покрытием операторов, сохраняет отчёты `.cover`, `.txt`, `.html`, Cobertura XML и JSON в `test-results/coverage/`, JUnit XML — в `test-results/coverage/junit/`. Конвертер выводит в консоль количество покрытых и учтённых строк.
 - `make test-branch-coverage` запускает gobco для пакетов бизнес-логики и репозиториев и записывает результаты в `test-results/branch/`. Gobco измеряет покрытие условий и не измеряет `select`; это не то же самое, что полноценное покрытие всех возможных ветвлений.
 
 Команды возвращают ненулевой код при ошибке теста; результаты пишутся по каждому сервису отдельно. При наличии `gotestsum` создаётся JUnit XML; без него `go test -json` сохраняет события в файл и одновременно выводит текст результатов в консоль. В обоих случаях `python3` преобразует события в HTML-отчёт `*.tests.html`. Дополнительно доступен Allure Report 2 на основе JUnit XML от gotestsum.
+
+Для запуска unit-тестов и просмотра Allure достаточно одной команды:
+
+```sh
+make test-unit-allure
+```
+
+Команда запускает тесты, собирает отчёт и открывает его через локальный
+HTTP-сервер на `http://127.0.0.1:8090/`. Сервер работает до `Ctrl+C`.
+Отчёт формируется и при падении тестов, чтобы можно было посмотреть ошибки;
+после завершения просмотра команда возвращает ненулевой код при ошибке тестов.
+Другой порт задаётся через `ALLURE_PORT=8091`.
+
+JUnit XML сохраняется отдельно в `test-results/<режим>/junit/`, поэтому Allure
+читает его напрямую, без временной папки и фильтрации отчётов покрытия.
+Для повторного просмотра готового отчёта используйте `make allure-open`.
+Для сборки отчёта по существующим результатам — `make allure-report`;
+для интеграционного прогона добавьте `ALLURE_RESULTS=integration` к обеим
+командам. При открытии `index.html` через `file://` браузер может блокировать
+загрузку JSON, поэтому отчёт открывается через HTTP.
 
 ### Файлы `infra/testing`
 
@@ -121,7 +141,6 @@
 | [`render-go-report.py`](infra/testing/render-go-report.py) | Преобразует сохранённые события `go test -json` в HTML-отчёт `*.tests.html`. |
 | [`trace-test-process.sh`](infra/testing/trace-test-process.sh) | Обёртка для `go test -exec`: записывает запущенные тестовые бинарники в `processes.tsv` при `make test-processes`. |
 | [`branch-coverage.sh`](infra/testing/branch-coverage.sh) | Запускает `gobco` для пакетов сервисов и репозиториев при `make test-branch-coverage`; отчёты кладёт в `test-results/branch/`. |
-| [`allure-report.sh`](infra/testing/allure-report.sh) | Создаёт Allure-отчёт из JUnit XML последнего прогона по `make allure-report` или `make test-unit-allure`. |
 
 Проверка заголовков HTTP, gzip и условных запросов работающего NGINX запускается отдельно: `python3 nginx/tests/check_cache_headers.py`.
 
@@ -173,7 +192,7 @@ Builders создают валидные значения по умолчани�
 - `make test-unit-offline` на macOS запускает тесты через `sandbox-exec` с запретом сетевых операций и `GOPROXY=off GOSUMDB=off`. Нужны доступные локально Go, модули, Python и разрешение ОС на создание sandbox. Команда не устанавливает инструменты и не скачивает зависимости.
 - `make test-processes` передаёт `go test` флаг `-exec` с обёрткой `infra/testing/trace-test-process.sh`. Она записывает имя модуля, PID, PPID и путь к тестовому бинарнику в `test-results/processes/processes.tsv`, а затем заменяется им через `exec`. Итоги — в `summary.txt`.
 - `make test-coverage` сохраняет HTML и текстовый отчёты `go tool cover` в `test-results/coverage/`; они показывают покрытие операторов Go. `gocover-cobertura` дополнительно формирует `*.cobertura.xml` и выводит оценку покрытия строк. Покрытие ветвлений рассчитывается отдельно.
-- `make test-unit-allure` запускает unit-тесты и затем формирует Allure-отчёт в `test-results/allure/unit/`. Установите gotestsum через `make test-tools` и Allure Report 2 CLI (macOS: `brew install allure`). Команда `make allure-report ALLURE_RESULTS=integration` формирует отчёт по последнему интеграционному прогону. Используется встроенный в Allure 2 JUnit XML plugin; без `gotestsum` XML не создаётся. Allure отображает результаты тестов, но не измеряет покрытие кода.
+- `make test-unit-allure` запускает unit-тесты, формирует и открывает Allure-отчёт в `test-results/allure/unit/`. Установите gotestsum через `make test-tools` и Allure Report 2 CLI (macOS: `brew install allure`). Команда `make allure-report ALLURE_RESULTS=integration` формирует отчёт по последнему интеграционному прогону. Используется встроенный в Allure 2 JUnit XML plugin; без `gotestsum` XML не создаётся. Allure отображает результаты тестов, но не измеряет покрытие кода.
 - `make test-branch-coverage` предназначен для отчётов gobco по условиям в `test-results/branch/`. Перед запуском нужен `make test-tools`; gobco не покрывает все виды ветвлений, в том числе `select`.
 
 ### Сколько процессов запускают unit-тесты

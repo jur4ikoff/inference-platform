@@ -18,7 +18,6 @@ import (
 	"github.com/jur4ikoff/user-service/internal/infrastructure"
 	"github.com/jur4ikoff/user-service/internal/repository"
 	"github.com/jur4ikoff/user-service/internal/service"
-	"github.com/jur4ikoff/utils/httpmiddleware"
 	"github.com/jur4ikoff/utils/metrics"
 	"github.com/jur4ikoff/utils/telemetry"
 )
@@ -134,13 +133,9 @@ func run() error {
 		}
 		router.ServeHTTP(w, r)
 	})))
-	var rootHandler http.Handler = root
-	if cfg.ReadOnly {
-		rootHandler = httpmiddleware.ReadOnly(rootHandler)
-	}
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           telemetry.HTTPHandler(api.LogRequests(logger, http.TimeoutHandler(rootHandler, cfg.RequestTimeout, "request timed out")), "user-service"),
+		Handler:           telemetry.HTTPHandler(api.LogRequests(logger, http.TimeoutHandler(root, cfg.RequestTimeout, "request timed out")), "user-service"),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       cfg.RequestTimeout,
 		WriteTimeout:      cfg.RequestTimeout,

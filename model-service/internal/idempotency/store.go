@@ -1,4 +1,4 @@
-// Package idempotency persists the outcome of a deployment creation across replicas.
+// Package idempotency persists the outcome of a deployment creation across retries and restarts.
 package idempotency
 
 import (

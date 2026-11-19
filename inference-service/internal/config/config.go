@@ -16,7 +16,6 @@ type Config struct {
 	GRPCAddr               string
 	HTTPAddr               string
 	RequestTimeout         time.Duration
-	ReadOnly               bool
 	DatabaseURL            string
 	DatabaseMaxConns       int32
 	DatabaseMinConns       int32
@@ -47,10 +46,6 @@ type DeploymentManagerConfig struct {
 }
 
 func Load() (Config, error) {
-	readOnly, err := strconv.ParseBool(env("READ_ONLY", "false"))
-	if err != nil {
-		return Config{}, fmt.Errorf("READ_ONLY must be a boolean")
-	}
 	environment := env("APP_ENV", "local")
 	logLevel := "info"
 	if environment == "local" || environment == "development" {
@@ -100,7 +95,6 @@ func Load() (Config, error) {
 		GRPCAddr:               env("GRPC_ADDR", ":9091"),
 		HTTPAddr:               env("HTTP_ADDR", ":8080"),
 		RequestTimeout:         requestTimeout,
-		ReadOnly:               readOnly,
 		DatabaseURL:            strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		DatabaseMaxConns:       int32(maxConns),
 		DatabaseMinConns:       int32(minConns),

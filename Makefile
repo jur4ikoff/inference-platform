@@ -2,16 +2,16 @@
 
 COMPOSE_PROJECT := inference-platform
 COMPOSE := docker compose -p $(COMPOSE_PROJECT) --project-directory . --env-file infra/.env -f infra/docker-compose.yaml
-USER_SERVICE := user-service user-service-ro-1 user-service-ro-2 user-service-mirror
-MODEL_SERVICE := model-service model-service-ro-1 model-service-ro-2 model-service-mirror
-INFERENCE_SERVICE := inference-service inference-service-ro-1 inference-service-ro-2 inference-service-mirror
+USER_SERVICE := user-service
+MODEL_SERVICE := model-service
+INFERENCE_SERVICE := inference-service
 INFRA_SERVICES := loki tempo otel-collector alloy prometheus grafana
 APPLICATION_SERVICES := $(USER_SERVICE) $(MODEL_SERVICE) $(INFERENCE_SERVICE) nginx adminer observability-service
 BUF := docker run --rm -v "$(CURDIR)/internal-api:/workspace" -w /workspace bufbuild/buf:1.61.0
 SQLC := docker run --rm -v "$(CURDIR):/src" -w /src sqlc/sqlc:1.31.1
 PREK ?= prek
 
-.PHONY: help up up-infra up-database up-services bootstrap-admin up-user up-model up-inference locust replication-check proto sql-generate sql-check build down restart restart-user restart-model restart-inference ps logs logs-user logs-model logs-inference logs-postgres logs-observability config test lint fmt
+.PHONY: help up up-infra up-database up-services bootstrap-admin up-user up-model up-inference locust proto sql-generate sql-check build down restart restart-user restart-model restart-inference ps logs logs-user logs-model logs-inference logs-postgres logs-observability config test lint fmt
 
 help: ## Показать доступные команды
 	@printf '%s\n' \
@@ -26,7 +26,6 @@ help: ## Показать доступные команды
 		'  up-model            Поднять model-service и его зависимости' \
 		'  up-inference        Поднять inference-service и его зависимости' \
 		'  locust              Поднять сервисы и веб-интерфейс Locust' \
-		'  replication-check   Проверить репликацию и запрет записи на standby' \
 		'  proto               Сгенерировать protobuf- и gRPC-стабы internal-api' \
 		'  sql-generate        Сгенерировать Go-обёртки SQL-запросов через sqlc' \
 		'  sql-check           Проверить SQL-запросы и схему для sqlc' \
@@ -45,6 +44,9 @@ help: ## Показать доступные команды
 		'  logs-observability  Смотреть логи Grafana, Loki, Tempo и OTel Collector' \
 		'  config              Проверить итоговую Docker Compose-конфигурацию' \
 		'  test                Запустить unit- и интеграционные тесты' \
+		'  test-unit-allure    Запустить unit-тесты и открыть Allure-отчёт' \
+		'  allure-report       Создать Allure-отчёт из последнего JUnit-прогона' \
+		'  allure-open         Открыть Allure-отчёт через локальный HTTP-сервер' \
 		'  generate-mocks      Сгенерировать тестовые моки inference-service' \
 		'  test-integration    Запустить интеграционные тесты с PostgreSQL' \
 		'  test-shuffle        Запустить unit-тесты в случайном порядке' \
@@ -56,15 +58,14 @@ help: ## Показать доступные команды
 up: up-services ## Поднять инфраструктуру, БД с миграциями и сервисы
 
 up-infra: ## Поднять инфраструктуру наблюдаемости
-	$(COMPOSE) up -d --wait $(INFRA_SERVICES)
+	$(COMPOSE) up -d --remove-orphans --wait $(INFRA_SERVICES)
 
-up-database: ## Поднять primary, применить миграции и запустить реплику PostgreSQL
-	$(COMPOSE) up -d --wait postgres
+up-database: ## Поднять PostgreSQL и применить миграции
+	$(COMPOSE) up -d --remove-orphans --wait postgres
 	./infra/postgres/apply_migrations.sh
-	$(COMPOSE) up -d --wait postgres-2
 
 up-services: up-infra up-database ## Поднять БД с миграциями и прикладные сервисы
-	$(COMPOSE) up -d --build --no-deps $(APPLICATION_SERVICES)
+	$(COMPOSE) up -d --remove-orphans --build --no-deps $(APPLICATION_SERVICES)
 	$(COMPOSE) exec -T nginx nginx -s reload
 
 bootstrap-admin: up-database ## Создать начального администратора из infra/.env
@@ -73,24 +74,19 @@ bootstrap-admin: up-database ## Создать начального админи
 	./scripts/bootstrap-admin.sh
 
 up-user: up-database ## Поднять user-service и его зависимости
-	$(COMPOSE) up -d --build $(USER_SERVICE)
+	$(COMPOSE) up -d --remove-orphans --build $(USER_SERVICE)
 
 up-model: up-database ## Поднять model-service и его зависимости
-	$(COMPOSE) up -d --build $(MODEL_SERVICE)
+	$(COMPOSE) up -d --remove-orphans --build $(MODEL_SERVICE)
 
 up-inference: up-database ## Поднять БД с миграциями и inference-service
-	$(COMPOSE) up -d --build $(INFERENCE_SERVICE)
+	$(COMPOSE) up -d --remove-orphans --build $(INFERENCE_SERVICE)
 
 locust: bootstrap-admin up-services ## Поднять сервисы и веб-интерфейс Locust
 	@test -f stress-test/.env || cp stress-test/.env.example stress-test/.env
 	@mkdir -p stress-test/docker-results
-	docker compose --env-file infra/.env --env-file stress-test/.env -f stress-test/docker-compose.yaml up -d --scale locust-worker=$(or $(LOCUST_WORKERS),2) locust-ui locust-worker
+	docker compose --env-file infra/.env --env-file stress-test/.env -f stress-test/docker-compose.yaml up -d --remove-orphans locust-ui
 	@printf '%s\n' 'Locust UI: http://localhost:8089'
-
-replication-check: ## Проверить репликацию PostgreSQL
-	./infra/postgres/check_replication.sh
-
-
 
 proto: ## Сгенерировать protobuf- и gRPC-стабы internal-api
 	$(BUF) generate
@@ -105,18 +101,18 @@ build: ## Пересобрать образы
 	$(COMPOSE) build
 
 down: ## Остановить стек, не удаляя volumes
-	$(COMPOSE) down
+	$(COMPOSE) down --remove-orphans
 
 restart: down up ## Перезапустить весь стек
 
 restart-user: ## Пересобрать и перезапустить user-service
-	$(COMPOSE) up -d --build --force-recreate $(USER_SERVICE)
+	$(COMPOSE) up -d --remove-orphans --build --force-recreate $(USER_SERVICE)
 
 restart-model: ## Пересобрать и перезапустить model-service
-	$(COMPOSE) up -d --build --force-recreate $(MODEL_SERVICE)
+	$(COMPOSE) up -d --remove-orphans --build --force-recreate $(MODEL_SERVICE)
 
 restart-inference: up-database ## Пересобрать и перезапустить inference-service
-	$(COMPOSE) up -d --build --force-recreate $(INFERENCE_SERVICE)
+	$(COMPOSE) up -d --remove-orphans --build --force-recreate $(INFERENCE_SERVICE)
 
 
 
@@ -207,12 +203,22 @@ test-unit-offline: ## Запустить unit-тесты без доступа �
 	sandbox-exec -p '(version 1) (allow default) (deny network*)' env GOPROXY=off GOSUMDB=off $(CURDIR)/infra/testing/run-go-tests.sh unit
 
 ALLURE_RESULTS ?= unit
-.PHONY: allure-report test-unit-allure
+ALLURE_PORT ?= 8090
+.PHONY: allure-report allure-open test-unit-allure
 
 allure-report: ## Создать Allure-отчёт из последнего JUnit-прогона
-	./infra/testing/allure-report.sh "$(ALLURE_RESULTS)"
+	@command -v allure >/dev/null || { echo 'Allure CLI не найден: установите Allure Report 2' >&2; exit 1; }
+	@test -n "$(wildcard test-results/$(ALLURE_RESULTS)/junit/*.xml)" || { echo 'JUnit XML не найден: запустите тесты с gotestsum' >&2; exit 1; }
+	allure generate "test-results/$(ALLURE_RESULTS)/junit" --clean -o "test-results/allure/$(ALLURE_RESULTS)"
 
-test-unit-allure: ## Запустить unit-тесты и создать Allure-отчёт
+allure-open: ## Открыть готовый Allure-отчёт через локальный HTTP-сервер
+	@command -v allure >/dev/null || { echo 'Allure CLI не найден: установите Allure Report 2' >&2; exit 1; }
+	@test -f "test-results/allure/$(ALLURE_RESULTS)/index.html" || { echo 'Отчёт не найден: выполните make allure-report ALLURE_RESULTS=$(ALLURE_RESULTS)' >&2; exit 1; }
+	allure open --host 127.0.0.1 --port $(ALLURE_PORT) "$(CURDIR)/test-results/allure/$(ALLURE_RESULTS)"
+
+test-unit-allure: ## Запустить unit-тесты, собрать и открыть Allure-отчёт
 	@command -v gotestsum >/dev/null || { echo 'gotestsum не найден: выполните make test-tools' >&2; exit 1; }
 	@command -v allure >/dev/null || { echo 'Allure CLI не найден: установите Allure Report 2' >&2; exit 1; }
-	@status=0; $(MAKE) test-unit || status=$$?; $(MAKE) allure-report ALLURE_RESULTS=unit || status=1; exit $$status
+	@status=0; $(MAKE) test-unit || status=$$?; \
+	$(MAKE) allure-report ALLURE_RESULTS=unit || exit $$?; \
+	$(MAKE) allure-open ALLURE_RESULTS=unit || status=1; exit $$status

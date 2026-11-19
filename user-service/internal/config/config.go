@@ -19,7 +19,6 @@ type Config struct {
 
 	HTTPAddr       string
 	RequestTimeout time.Duration
-	ReadOnly       bool
 
 	DatabaseURL      string
 	DatabaseMaxConns int32
@@ -85,10 +84,6 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	readOnly, err := optionalBool("READ_ONLY", false)
-	if err != nil {
-		return Config{}, err
-	}
 
 	config := Config{
 		Environment:       environment,
@@ -96,7 +91,6 @@ func Load() (Config, error) {
 		Version:           envOrDefault("APP_VERSION", "dev"),
 		HTTPAddr:          envOrDefault("HTTP_ADDR", ":8080"),
 		RequestTimeout:    requestTimeout,
-		ReadOnly:          readOnly,
 		DatabaseURL:       requiredEnv("DATABASE_URL"),
 		DatabaseMaxConns:  int32(maxConns),
 		DatabaseMinConns:  int32(minConns),

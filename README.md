@@ -110,8 +110,8 @@ prek run --stage manual go-vet-inference-service --all-files
 NGINX доступен на `http://localhost:8000` (порт задаётся `NGINX_HTTP_PORT` в `infra/.env`).
 Он направляет `/api/v1/projects/{project}/models...` и `/api/v1/projects/{project}/deployments...` в model-service, а остальные `/api/v1/...` — в user-service. Авторизацию выполняют сами сервисы. Общий Swagger UI с переключением двух схем доступен на `/api/v1/docs`; схема user-service — `/api/v1/openapi-user.json`, model-service — `/api/v1/openapi-model.json`. Модельные API и UI доступны без JWT по `/inference/{project}/{deployment}/`; потоковые ответы не буферизуются.
 
-Отдельное зеркало model-service доступно на `/mirror/`. Настройка маршрутов,
-primary–replica PostgreSQL и проверка репликации описаны в [документации зеркала](docs/mirror-model-service.md).
+Каждый сервис запускается в одном экземпляре. Все сервисы читают и пишут
+в единственный PostgreSQL `postgres`; NGINX направляет запросы прямо в соответствующий сервис.
 
 Служебные страницы: `/management` содержит ссылки, `/status` показывает страницу со статистикой NGINX (исходные данные stub_status — `/status/data`), `/health` проверяет процесс NGINX, `/ready` возвращает JSON с готовностью user-service и model-service и HTTP-доступностью inference-service: первые два сервиса проверяют базу, а model-service также проверяет gRPC inference-service. Эти данные выводятся на странице `/status`. `/documentation` отображает этот README, его исходный Markdown доступен на `/documentation/raw`, `/` и `/reserved/` — приветственную страницу. На `/legacy` доступны бинарные файлы Linux-утилиты bootstrap-admin для архитектур amd64 и arm64; они собираются вместе с образом NGINX. Это утилита первоначального создания администратора, работающая напрямую с PostgreSQL, а не клиент API.
 
@@ -121,7 +121,7 @@ primary–replica PostgreSQL и проверка репликации описа
 
 NGINX устанавливает заголовок ответа `Server: Inference Platform`. Проверить его можно командой `curl -I http://localhost:8000/`.
 
-Публичные CSS, JavaScript, изображения и шрифты в `/static/` и `/mirror/static/`
+Публичные CSS, JavaScript, изображения и шрифты в `/static/`
 кэшируются на час; ошибки и остальные страницы и API получают `Cache-Control: no-store`.
 Текстовые ответы при поддержке клиентом сжимаются gzip; потоковый `/inference/`
 не сжимается.
@@ -210,8 +210,7 @@ Inference-service использует gRPC-контракт `inference.v1.Infer
 | `GET /api/v1/projects/{project}/deployments?offset=0&limit=20` | Получить страницу развёртываний проекта | `200`, `deployments` и `nextpagetoken` |
 
 При повторе создания используйте тот же `Idempotency-Key`: ответ успешной
-операции сохраняется в primary PostgreSQL и возвращается любой репликой или
-зеркалом. Ключ принадлежит пользователю; повторное использование для другого
+операции сохраняется в PostgreSQL и возвращается при повторном запросе. Ключ принадлежит пользователю; повторное использование для другого
 проекта или модели возвращает `409`. Для нового запуска после остановки нужен
 новый ключ. Если процесс прервался и результат операции неизвестен, сервер
 возвращает `503` и не запускает её повторно: требуется проверить состояние

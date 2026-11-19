@@ -14,7 +14,6 @@ import (
 	"github.com/rs/zerolog/log"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
@@ -47,13 +46,7 @@ func NewServer(inference *service.DeploymentService, config config.Config, appMe
 			ctx = telemetry.WithLogger(ctx, requestLogger)
 			ctx, cancel := context.WithTimeout(ctx, config.RequestTimeout)
 			defer cancel()
-			var response any
-			var err error
-			if config.ReadOnly && !readOnlyMethod(info.FullMethod) {
-				err = status.Error(codes.PermissionDenied, "read-only instance")
-			} else {
-				response, err = handler(ctx, request)
-			}
+			response, err := handler(ctx, request)
 			if ctx.Err() != nil {
 				err = status.FromContextError(ctx.Err()).Err()
 				response = nil
@@ -75,17 +68,4 @@ func NewServer(inference *service.DeploymentService, config config.Config, appMe
 	reflection.Register(server)
 
 	return server
-}
-
-func readOnlyMethod(method string) bool {
-	switch method {
-	case inferencev1.InferenceService_GetDeploymentByID_FullMethodName,
-		inferencev1.InferenceService_GetDeploymentByName_FullMethodName,
-		inferencev1.InferenceService_ListDeployments_FullMethodName,
-		inferencev1.InferenceService_ListAllDeployments_FullMethodName,
-		"/grpc.health.v1.Health/Check":
-		return true
-	default:
-		return false
-	}
 }

@@ -12,9 +12,7 @@
 микросервиса своя строка с графиками доступности и логами:
 
 - **User Service** — HTTP-запросы в секунду и p95 времени ответа.
-- **Model Service** — те же показатели отдельно по каждому экземпляру:
-  `model-service`, `model-service-ro-1`, `model-service-ro-2` и
-  `model-service-mirror`.
+- **Model Service** — HTTP-запросы в секунду и p95 времени ответа.
 - **Inference Service** — частота и p95 unary gRPC-запросов. Потоковый HTTP
   model proxy не входит в эти метрики.
 
@@ -60,9 +58,9 @@ deployment нет. Метки содержат идентификаторы и �
 Например, model-service экспортирует счётчик `app_http_requests_total` с
 метками HTTP-метода и кода ответа и гистограмму
 `app_http_request_duration_seconds`. Prometheus опрашивает `/metrics` каждого
-экземпляра раз в 10 секунд и добавляет метки `job` и `instance`. Адреса
-настроены в `infra/observability/prometheus/prometheus.yaml`; при добавлении
-новых экземпляров добавьте их в список targets. `/metrics` доступен внутри
+сервиса раз в 10 секунд и добавляет метки `job` и `instance`. Адреса
+настроены в `infra/observability/prometheus/prometheus.yaml`: по одному
+адресу на сервис. `/metrics` доступен внутри
 Docker-сети и не проксируется как публичный API.
 
 Alloy читает Docker-логи и отправляет их в Loki с метками `service` и

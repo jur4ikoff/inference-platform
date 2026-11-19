@@ -8,7 +8,7 @@ discovery.relabel "container_logs" {
 
   rule {
     source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
-    regex         = "(user-service|model-service|inference-service)(-ro-[12]|-mirror)?|nginx"
+    regex         = "(user-service|model-service|inference-service)|nginx"
     action        = "keep"
   }
 

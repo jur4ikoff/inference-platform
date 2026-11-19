@@ -124,14 +124,12 @@ func run() error {
 	}
 	server := api.NewServer(deploymentService, cfg, appMetrics, logger)
 
-	if !cfg.ReadOnly {
-		if err = deploymentService.Init(ctx); err != nil {
-			return fmt.Errorf("init deployment service: %w", err)
-		}
+	if err = deploymentService.Init(ctx); err != nil {
+		return fmt.Errorf("init deployment service: %w", err)
 	}
 
 	var deploymentManager *manager.DeploymentManager
-	if monitorRepo != nil && !cfg.ReadOnly {
+	if monitorRepo != nil {
 		deploymentManager, err = manager.NewDeploymentManager(monitorRepo, runtimeClient, routes, cfg.DeploymentManager)
 		if err != nil {
 			return fmt.Errorf("create deployment manager: %w", err)
@@ -150,9 +148,7 @@ func run() error {
 	httpMux := http.NewServeMux()
 	httpMux.Handle("GET /metrics", appMetrics.Handler())
 	httpMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
-	if !cfg.ReadOnly {
-		httpMux.Handle("/", appMetrics.InstrumentHTTP(routes))
-	}
+	httpMux.Handle("/", appMetrics.InstrumentHTTP(routes))
 	httpServer := &http.Server{
 		Addr: cfg.HTTPAddr, Handler: telemetry.HTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			httpMux.ServeHTTP(w, r.WithContext(telemetry.WithLogger(r.Context(), logger)))

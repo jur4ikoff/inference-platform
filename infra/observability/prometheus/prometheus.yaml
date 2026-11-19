@@ -5,17 +5,14 @@ global:
 scrape_configs:
   - job_name: user-service
     static_configs:
-      - targets: ["user-service:8080", "user-service-ro-1:8080", "user-service-ro-2:8080", "user-service-mirror:8080"]
+      - targets: ["user-service:8080"]
   - job_name: model-service
     static_configs:
       - targets:
           - "model-service:8081"
-          - "model-service-ro-1:8081"
-          - "model-service-ro-2:8081"
-          - "model-service-mirror:8081"
   - job_name: inference-service
     static_configs:
-      - targets: ["inference-service:8080", "inference-service-ro-1:8080", "inference-service-ro-2:8080", "inference-service-mirror:8080"]
+      - targets: ["inference-service:8080"]
   - job_name: observability-service
     static_configs:
       - targets: ["observability-service:8080"]

@@ -19,7 +19,6 @@ import (
 	"github.com/jur4ikoff/model-service/internal/repository"
 	"github.com/jur4ikoff/model-service/internal/service"
 	"github.com/jur4ikoff/model-service/internal/transport"
-	"github.com/jur4ikoff/utils/httpmiddleware"
 	"github.com/jur4ikoff/utils/logging"
 	"github.com/jur4ikoff/utils/metrics"
 	"github.com/jur4ikoff/utils/telemetry"
@@ -27,10 +26,8 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
-	_ "google.golang.org/grpc/balancer/roundrobin"
 	"google.golang.org/grpc/credentials/insecure"
 	healthv1 "google.golang.org/grpc/health/grpc_health_v1"
-	"google.golang.org/grpc/resolver/dns"
 )
 
 func main() {
@@ -87,33 +84,9 @@ func main() {
 		os.Exit(1)
 	}
 	defer idempotencyPool.Close()
-	var readPool *pgxpool.Pool
-	if cfg.ReadDatabaseURL != "" {
-		readConfig, err := pgxpool.ParseConfig(cfg.ReadDatabaseURL)
-		if err != nil {
-			logger.Error().Err(err).Msg("parse standby database configuration")
-			os.Exit(1)
-		}
-		readConfig.MaxConns = cfg.DatabaseMaxConn
-		readConfig.MinConns = cfg.DatabaseMinConn
-		readConfig.ConnConfig.Tracer = telemetry.QueryTracer{}
-		readPool, err = pgxpool.NewWithConfig(ctx, readConfig)
-		if err != nil {
-			logger.Error().Err(err).Msg("create standby database pool")
-			os.Exit(1)
-		}
-		defer readPool.Close()
-		if err := readPool.Ping(ctx); err != nil {
-			logger.Error().Err(err).Msg("ping standby database")
-			os.Exit(1)
-		}
-	}
-
-	dns.SetMinResolutionInterval(time.Second)
 	connection, err := grpc.NewClient(cfg.InferenceGRPCAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
-		grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: backoff.Config{BaseDelay: 100 * time.Millisecond, Multiplier: 1.6, Jitter: 0.2, MaxDelay: time.Second}, MinConnectTimeout: time.Second}),
 		grpc.WithChainUnaryInterceptor(transport.RetryReads),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize((10<<20)+1024)),
@@ -124,9 +97,6 @@ func main() {
 	}
 	defer connection.Close()
 	modelRepo := repository.NewModelRepository(pool)
-	if readPool != nil {
-		modelRepo = repository.NewModelRepository(pool, readPool)
-	}
 	models := service.NewModelService(
 		modelRepo,
 		service.NewGRPCModelRuntime(inferencev1.NewInferenceServiceClient(connection)),
@@ -147,12 +117,6 @@ func main() {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
-		if readPool != nil {
-			if err := readPool.Ping(checkCtx); err != nil {
-				http.Error(w, "not ready", http.StatusServiceUnavailable)
-				return
-			}
-		}
 		result, err := healthv1.NewHealthClient(connection).Check(checkCtx, &healthv1.HealthCheckRequest{Service: "inference.v1.InferenceService"})
 		if err != nil || result.GetStatus() != healthv1.HealthCheckResponse_SERVING {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
@@ -161,16 +125,8 @@ func main() {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	router := api.NewHandler(models, verifier).WithIdempotencyStore(idempotency.New(idempotencyPool)).Router()
-	root.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && r.Header.Get("X-Model-Read-Primary") != "true" {
-			r = r.WithContext(repository.WithReplicaRead(r.Context()))
-		}
-		router.ServeHTTP(w, r)
-	}))
+	root.Handle("/", router)
 	var handler http.Handler = root
-	if cfg.ReadOnly {
-		handler = httpmiddleware.ReadOnly(handler)
-	}
 	handler = appMetrics.InstrumentHTTP(handler)
 	next := handler
 	handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +143,7 @@ func main() {
 
 	errorsChannel := make(chan error, 1)
 	go func() {
-		logger.Info().Str("address", cfg.HTTPAddr).Bool("read_only", cfg.ReadOnly).Msg("model service started")
+		logger.Info().Str("address", cfg.HTTPAddr).Msg("model service started")
 		errorsChannel <- server.ListenAndServe()
 	}()
 
