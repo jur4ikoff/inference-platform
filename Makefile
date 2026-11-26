@@ -48,7 +48,9 @@ help: ## Показать доступные команды
 		'  allure-report       Создать HTML-отчёт из результатов Allure' \
 		'  allure-open         Открыть результаты последнего прогона в Allure' \
 		'  generate-mocks      Сгенерировать тестовые моки inference-service' \
-		'  test-integration    Запустить интеграционные тесты с PostgreSQL' \
+		'  test-repository-integration  Интеграционные тесты репозиториев с PostgreSQL' \
+		'  test-pipeline           ЛР №2: unit → integration → E2E в Docker' \
+		'  test-integration    Интеграционные тесты сервисов с PostgreSQL' \
 		'  test-shuffle        Запустить unit-тесты в случайном порядке' \
 		'  test-coverage       Сформировать отчёты покрытия операторов' \
 		'  test-branch-coverage  Измерить покрытие условий с gobco' \
@@ -144,6 +146,7 @@ config: ## Проверить итоговую Compose-конфигурацию
 
 test: ## Запустить unit- и интеграционные тесты
 	$(MAKE) test-unit
+	$(MAKE) test-repository-integration
 	$(MAKE) test-integration
 
 lint: ## Запустить проверки prek для всех отслеживаемых файлов
@@ -162,7 +165,7 @@ TEST_TOOLS := $(CURDIR)/.test-tools
 export PATH := $(TEST_TOOLS):$(PATH)
 export TEST_POSTGRES_PORT
 
-.PHONY: generate-mocks test-tools test-unit test-db-up test-db-down test-integration test-coverage test-branch-coverage
+.PHONY: generate-mocks test-tools test-unit test-db-up test-db-down test-repository-integration test-coverage test-branch-coverage
 
 generate-mocks: ## Сгенерировать тестовые моки inference-service
 	cd inference-service && go generate ./internal/service ./internal/repository ./internal/manager
@@ -181,7 +184,7 @@ test-db-up: ## Запустить временную тестовую PostgreSQL
 test-db-down: ## Остановить тестовую PostgreSQL
 	$(TEST_COMPOSE) down
 
-test-integration: test-db-up ## Запустить интеграционные тесты с отдельной БД
+test-repository-integration: test-db-up ## Запустить интеграционные тесты репозиториев с отдельной БД
 	USER_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' MODEL_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' INFERENCE_TEST_DATABASE_URL='$(TEST_DATABASE_URL)' ./infra/testing/run-go-tests.sh integration
 
 test-coverage: ## Собрать покрытие операторов и отчёты unit-тестов
@@ -219,3 +222,10 @@ test-unit-allure: ## Запустить unit-тесты, собрать и от�
 	@command -v allure >/dev/null || { echo 'Allure CLI не найден: установите Allure Report 2' >&2; exit 1; }
 	@status=0; $(MAKE) test-unit || status=$$?; \
 	$(MAKE) allure-open ALLURE_RESULTS=unit || status=1; exit $$status
+
+.PHONY: test-pipeline test-integration
+test-pipeline: ## ЛР №2: unit → integration → E2E в изолированных контейнерах
+	./infra/testing/lab2/run.sh full
+
+test-integration: ## Запустить интеграционные тесты сервисов с PostgreSQL в контейнерах
+	./infra/testing/lab2/run.sh integration

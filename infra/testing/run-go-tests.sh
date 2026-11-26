@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -uo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
-mode=${1:?expected unit, shuffle, processes, integration or coverage}
-case "$mode" in unit|shuffle|processes|integration|coverage) ;; *) printf 'Неизвестный режим: %s\n' "$mode" >&2; exit 2;; esac
-results="$root/test-results/$mode"
+mode=${1:?expected unit, shuffle, processes, integration, service-integration or coverage}
+case "$mode" in unit|shuffle|processes|integration|service-integration|coverage) ;; *) printf 'Неизвестный режим: %s\n' "$mode" >&2; exit 2;; esac
+results=${2:-"$root/test-results/$mode"}
+if [[ "$mode" == service-integration ]]; then
+  : "${USER_TEST_DATABASE_URL:?required}" "${MODEL_TEST_DATABASE_URL:?required}" "${INFERENCE_TEST_DATABASE_URL:?required}"
+fi
+mkdir -p "$results" || exit 1
+results=$(cd "$results" && pwd) || exit 1
 export ALLURE_RESULTS_DIR="$results/allure-results"
-mkdir -p "$results"
 # Allure appends results; each test run must start with an empty directory.
 rm -rf "$ALLURE_RESULTS_DIR"
 mkdir -p "$ALLURE_RESULTS_DIR"
@@ -15,9 +19,15 @@ if [[ "$mode" == processes ]]; then
 fi
 status=0
 for module in user-service model-service inference-service; do
+  if [[ "${TEST_ALLURE_BY_MODULE:-0}" == 1 ]]; then
+    export ALLURE_RESULTS_DIR="$results/$module/allure-results"
+    rm -rf "$ALLURE_RESULTS_DIR"
+    mkdir -p "$ALLURE_RESULTS_DIR"
+  fi
   case "$mode:$module" in
-    unit:*|shuffle:*|processes:*) flags=(-count=1 -skip '^(TestUserRepositoryIntegration|TestModelsAreIdentifiedByIDWithinProject|TestDeploymentIntegration)' ./...);;
-    coverage:*) flags=(-count=1 -skip '^(TestUserRepositoryIntegration|TestModelsAreIdentifiedByIDWithinProject|TestDeploymentIntegration)' -coverprofile="$results/$module.cover" ./...);;
+    unit:*|shuffle:*|processes:*) flags=(-count=1 -skip '^(TestServiceIntegration|TestUserRepositoryIntegration|TestModelsAreIdentifiedByIDWithinProject|TestDeploymentIntegration)' ./...);;
+    coverage:*) flags=(-count=1 -skip '^(TestServiceIntegration|TestUserRepositoryIntegration|TestModelsAreIdentifiedByIDWithinProject|TestDeploymentIntegration)' -coverprofile="$results/$module.cover" ./...);;
+    service-integration:*) flags=(-count=1 -run '^TestServiceIntegration$' ./internal/service);;
     integration:user-service) flags=(-count=1 -run '^TestUserRepositoryIntegration$' ./internal/repository);;
     integration:model-service) flags=(-count=1 -run '^TestModelsAreIdentifiedByIDWithinProject$' ./internal/repository);;
     integration:inference-service) flags=(-count=1 -run '^TestDeploymentIntegration' ./internal/repository);;
@@ -36,6 +46,10 @@ for module in user-service model-service inference-service; do
   printf 'Результаты: %s\n' "$results/$module.json"
   if [[ -s "$results/$module.json" ]]; then
     python3 "$root/infra/testing/render-go-report.py" "$results/$module.json" "$results/$module.tests.html" || status=1
+  fi
+  if [[ "$mode" == service-integration ]]; then
+    python3 -c 'import json,sys; events=[json.loads(line) for line in open(sys.argv[1])]; outcomes=[e["Action"] for e in events if e.get("Test")=="TestServiceIntegration" and e["Action"] in ("pass","skip","fail")]; sys.exit(0 if outcomes==["pass"] else 1)' "$results/$module.json" || status=1
+    if [[ "$status" != 0 ]]; then break; fi
   fi
   if [[ "$mode" == coverage && -s "$results/$module.cover" ]]; then
     (cd "$workdir" && go tool cover -html="$results/$module.cover" -o "$results/$module.html") || status=1

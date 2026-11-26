@@ -1,0 +1,48 @@
+name: Testing (Labs 1 and 2)
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  testing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LAB2_PROJECT: lab2-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      LAB2_RESULTS_DIR: ${{ github.workspace }}/test-results/lab2/current
+      LAB2_HISTORY_DIR: ${{ github.workspace }}/test-results/lab2/history
+    steps:
+      - uses: actions/checkout@v6
+      - name: Restore Allure history
+        uses: actions/cache/restore@v5
+        with:
+          path: test-results/lab2/history
+          key: allure-lab2-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            allure-lab2-${{ github.ref_name }}-
+      - name: Unit → integration → E2E (container runner)
+        run: ./infra/testing/lab2/run.sh full
+      - name: Finalize after cancellation or early failure
+        if: always()
+        run: |
+          if [ ! -f "$LAB2_RESULTS_DIR/report-complete" ] && docker image inspect inference-lab2-runner:local >/dev/null 2>&1; then
+            ./infra/testing/lab2/run.sh finalize
+          fi
+      - name: Save Allure history
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: test-results/lab2/history
+          key: allure-lab2-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Retain report, traffic and restoration evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: lab2-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/lab2/current/**
+            !test-results/lab2/current/keys/**
+          if-no-files-found: warn
+          retention-days: 14

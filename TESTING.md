@@ -102,7 +102,7 @@
 
 - `make test` последовательно запускает unit- и интеграционные тесты; для интеграционной части требуется Docker с доступной PostgreSQL.
 - `make test-unit` запускает тесты сервисов без `-short`, исключая интеграционные тесты PostgreSQL по префиксам имён в `infra/testing/run-go-tests.sh`. Новые интеграционные тесты `inference-service` должны начинаться с `TestDeploymentIntegration`. Результаты: `test-results/unit/`, данные Allure — в подкаталоге `allure-results/`.
-- `make test-integration` поднимает отдельный PostgreSQL и запускает интеграционные тесты репозиториев с явно заданными URL. Unit и интеграционные тесты deployment находятся в одном файле `inference-service/internal/repository/deployment_test.go`; интеграционные функции имеют префикс `TestDeploymentIntegration`, чтобы сценарий запуска мог отделить их от unit-тестов. Результаты: `test-results/integration/`. Порт по умолчанию 55432; изменить можно через `TEST_POSTGRES_PORT`. Тесты самостоятельно готовят изолированные временные таблицы или схему и применяют необходимые миграции.
+- `make test-repository-integration` поднимает отдельный PostgreSQL и запускает интеграционные тесты репозиториев с явно заданными URL. Unit и интеграционные тесты deployment находятся в одном файле `inference-service/internal/repository/deployment_test.go`; интеграционные функции имеют префикс `TestDeploymentIntegration`, чтобы сценарий запуска мог отделить их от unit-тестов. Результаты: `test-results/integration/`. Порт по умолчанию 55432; изменить можно через `TEST_POSTGRES_PORT`. Тесты самостоятельно готовят изолированные временные таблицы или схему и применяют необходимые миграции.
 - `make test-db-down` останавливает тестовый стенд. Данные PostgreSQL хранятся в tmpfs и удаляются при остановке контейнера; приложение и его БД команда не затрагивает.
 - `make test-coverage` выполняет unit-тесты с покрытием операторов, сохраняет отчёты `.cover`, `.txt`, `.html`, Cobertura XML и JSON в `test-results/coverage/`, данные Allure — в `test-results/coverage/allure-results/`. Конвертер выводит в консоль количество покрытых и учтённых строк.
 - `make test-branch-coverage` запускает gobco для пакетов бизнес-логики и репозиториев и записывает результаты в `test-results/branch/`. Gobco измеряет покрытие условий и не измеряет `select`; это не то же самое, что полноценное покрытие всех возможных ветвлений.
@@ -149,12 +149,12 @@ allure serve ./allure-results
 
 ### Файлы `infra/testing`
 
-Цели `make test-unit`, `make test-integration`, `make test-coverage`, `make test-shuffle`, `make test-processes` и `make test-unit-offline` вызывают `infra/testing/run-go-tests.sh` из корневого Makefile. Это сценарий запуска, а не тест: он выбирает режим `go test` для `user-service`, `model-service` и `inference-service` и сохраняет результаты каждого сервиса в `test-results/<режим>/`.
+Цели `make test-unit`, `make test-repository-integration`, `make test-coverage`, `make test-shuffle`, `make test-processes` и `make test-unit-offline` вызывают `infra/testing/run-go-tests.sh` из корневого Makefile. Это сценарий запуска, а не тест: он выбирает режим `go test` для `user-service`, `model-service` и `inference-service` и сохраняет результаты каждого сервиса в `test-results/<режим>/`.
 
 | Файл | Назначение |
 | --- | --- |
 | [`run-go-tests.sh`](infra/testing/run-go-tests.sh) | Запускает тесты трёх Go-модулей, исключает PostgreSQL-тесты из unit-прогона и сохраняет JSON и HTML, собирает записанные тестами результаты Allure и отчёты покрытия. |
-| [`docker-compose.yaml`](infra/testing/docker-compose.yaml) | Поднимает отдельный PostgreSQL для `make test-integration`; данные хранятся в `tmpfs`. |
+| [`docker-compose.yaml`](infra/testing/docker-compose.yaml) | Поднимает отдельный PostgreSQL для `make test-repository-integration`; данные хранятся в `tmpfs`. |
 | [`print-go-test-output.py`](infra/testing/print-go-test-output.py) | Печатает читаемый вывод из потока `go test -json`. |
 | [`render-go-report.py`](infra/testing/render-go-report.py) | Преобразует сохранённые события `go test -json` в HTML-отчёт `*.tests.html`. |
 | [`trace-test-process.sh`](infra/testing/trace-test-process.sh) | Обёртка для `go test -exec`: записывает запущенные тестовые бинарники в `processes.tsv` при `make test-processes`. |
@@ -194,7 +194,7 @@ Builders создают валидные значения по умолчани�
 | `repository/deployment_test.go` | Unit-сценарии методов репозитория с `MockDBTX`; интеграционные проверки записи, ограничений уникальности, статусов и истории. | Для интеграционных тестов нужен PostgreSQL; сценарии чтения и записи используют временную таблицу в транзакции. |
 | `metrics/deployments_test.go`, `metrics/container_limits_test.go` | Значения Prometheus-метрик и сигнал об ошибках БД или Docker. | Тестовые реализации БД и Docker. |
 
-В файле `repository/deployment_test.go` тесты с префиксом `TestDeploymentIntegration` запускаются через `make test-integration`; остальные входят в unit-прогон. Сгенерированные `*_mock_test.go` содержат только моки. Прямых тестов обработчика для `StopDeployment`, `GetDeploymentByID`, `GetDeploymentByName`, `ListDeployments` и `ListAllDeployments` сейчас нет: соответствующие операции проверяются на уровне сервиса и репозитория, но это не проверяет их gRPC-преобразование и коды ошибок.
+В файле `repository/deployment_test.go` тесты с префиксом `TestDeploymentIntegration` запускаются через `make test-repository-integration`; остальные входят в unit-прогон. Сгенерированные `*_mock_test.go` содержат только моки. Прямых тестов обработчика для `StopDeployment`, `GetDeploymentByID`, `GetDeploymentByName`, `ListDeployments` и `ListAllDeployments` сейчас нет: соответствующие операции проверяются на уровне сервиса и репозитория, но это не проверяет их gRPC-преобразование и коды ошибок.
 
 ## 5. Unit-тесты доступа к данным
 
@@ -228,4 +228,57 @@ cat test-results/processes/processes.tsv
 В Go нет тестовых классов: `go test` запускает отдельный тестовый бинарник для каждого пакета с тестами. Функции `Test...` и подзапуски `t.Run` внутри пакета выполняются в этом бинарнике; файлы внешнего пакета `*_test` тоже включаются в него. `go test -p N` ограничивает число одновременно выполняемых команд сборки и тестовых бинарников, а `go test -parallel N` — число одновременно выполняемых тестов, вызвавших `t.Parallel`, внутри одного бинарника. По умолчанию оба предела зависят от `GOMAXPROCS`. Эти флаги управляют параллелизмом, а не числом бинарников за полный прогон. Флаг `-count=1` в сценарии отключает кэш успешных тестов, чтобы бинарники действительно запустились и попали в журнал. В Go предел одновременно выполняемых тестовых бинарников задаёт флаг -p N. Для команд этого проекта его можно передать так: `GOFLAGS='-p=4' make test-unit`
 
 Подсчёт относится только к запускам тестовых бинарников: в него не входят процессы `go test`, компилятора, возможные дочерние процессы тестов, потоки ОС и горутины.
+
+## 7. ЛР №2: контейнерный pipeline
+
+Из корня репозитория выполните `make test-pipeline`. Нужны Docker с Compose v2, доступ к Docker socket и сеть для первой сборки зависимостей. Хостовые Go, PostgreSQL, Java и Allure не нужны. Один образ runner содержит Go 1.26.5, зависимости из `go.mod`/`go.sum`, Allure 2, curl/tcpdump и собранные штатные бинарники трёх сервисов и bootstrap-admin. В build-контейнер передаётся snapshot текущих исходников (без ключей и `.env`), оформляется как временный Git-репозиторий и клонируется внутри контейнера; бинарники и тесты используют эту же клонированную копию. Так локальные незакоммиченные изменения включены в проверку, а в CI snapshot основан на checkout проверяемого коммита. `commit.txt`, `worktree.txt` и `snapshot-revision.txt` сохраняют исходный HEAD, наличие локальных изменений и ревизию временного snapshot; рабочий Git-репозиторий скрипт не изменяет.
+
+Порядок: миграции и bootstrap → unit ЛР №1 → ровно три `TestServiceIntegration` → один E2E через curl. Новые integration исключены из unit и запускаются с `-count=1`, каждый использует настоящий сервисный слой, репозиторий и PostgreSQL. Только Docker runtime в integration inference-service заменён fake. Отсутствие DSN, пропуск или отсутствие одного из трёх результатов завершают обязательный integration-прогон ошибкой. Unit-тесты запускаются через `make test-unit`, тесты репозиториев — через `make test-repository-integration`, а три теста сервисов — через `make test-integration`.
+
+E2E входит через Nginx, выполняет login, создаёт проект, получает project token, создаёт Hugging Face модель, запускает deployment с `Idempotency-Key`, ждёт running, останавливает и удаляет модель, проверяет 404. `INFERENCE_SERVER_IMAGE` указывает на маленький HTTP fixture, принимающий аргументы llama без скачивания весов и записи в `/cache`. Реальными остаются три сервиса, PostgreSQL, Nginx и Docker.
+
+Каждый вызов создаёт проект `lab2-<время>-<pid>-<случайное число>`, отдельную сеть и PostgreSQL без фиксированных host-портов/имён. Результаты печатаются в начале и сохраняются в `test-results/lab2/<project>/`. При ошибке следующие стадии не выполняются и показаны skipped. Обработчик EXIT/INT/TERM останавливает писателей и только модельные контейнеры сети этого прогона, пересоздаёт тестовую БД, применяет все штатные миграции и seed, проверяет S0 SQL-запросами и удаляет ресурсы Compose. Общие ML-кеши и чужие контейнеры не удаляются. SIGKILL всей машины не обрабатывается.
+
+Артефакты: `summary.json`, `unit/` и `integration/` с Go JSON и native Allure, `allure-report/`, `setup.log`, `cleanup.log` с `S0 verified`, `stand.log`, `runner.log`, `e2e.log`, `traffic.pcap`, читаемый `traffic.txt`. Tcpdump снимает HTTP-трафик curl на интерфейсе тестовой сети перед login и до конца E2E; запись содержит только тестовые пароли/токены. Посмотреть её можно командой `tcpdump -nn -A -r <каталог-прогона>/traffic.pcap`; открыть отчёт — `allure open <каталог-прогона>/allure-report` при наличии локального Allure CLI. Не публикуйте каталог `keys/`; CI исключает его из артефакта.
+
+История лежит отдельно в `test-results/lab2/history/`: следующий отчёт забирает только `history/`, сырые результаты предыдущего прогона не переносятся. Обновление истории защищено блокировкой при конкурентном завершении. Путь можно изменить через `LAB2_HISTORY_DIR`; `LAB2_RESULTS_DIR` должен указывать на новый пустой каталог. `.github/workflows/testing.yaml` запускает тот же runner, всегда выполняет финализацию, сохраняет отчёты/pcap как artifact и переносит историю через GitHub Actions cache. Удалённый запуск CI требует push или ручного workflow_dispatch.
+
+### Демонстрация повторяемости и изоляции
+
+Команда `make test-integration` запускает три интеграционных сценария сервисов. После первой сборки `LAB2_SKIP_BUILD=1` переиспользует runner; при изменении исходников сначала выполните обычную сборку. По три integration выполняются два раза последовательно и два раза одновременно:
+
+```sh
+LAB2_SKIP_BUILD=1 ./infra/testing/lab2/run.sh integration
+LAB2_SKIP_BUILD=1 ./infra/testing/lab2/run.sh integration
+LAB2_SKIP_BUILD=1 ./infra/testing/lab2/run.sh integration > /tmp/lab2-a.log 2>&1 &
+a=$!
+LAB2_SKIP_BUILD=1 ./infra/testing/lab2/run.sh integration > /tmp/lab2-b.log 2>&1 &
+b=$!
+wait "$a"
+wait "$b"
+```
+
+Два последовательных отчёта также демонстрируют тренд Allure. В каждом `integration/<service>.json` должна быть одна запись pass для `TestServiceIntegration`, а `cleanup.log` должен содержать подтверждение S0. Проверить отсутствие оставшихся контейнеров конкретного проекта: `docker ps -a --filter label=com.docker.compose.project=<project>`.
+
+### Демонстрация отказа и прерывания
+
+Контроли ниже предназначены для ручной демонстрации, не добавляют продуктовых сценариев. `LAB2_FAIL_STAGE=integration` вызывает отказ после интеграционных проверок: unit/integration имеют результаты, E2E skipped. `LAB2_FAIL_STAGE=e2e` вызывает отказ после перехода реального deployment в running, до остановки модели. Оба вызова должны завершиться с ненулевым кодом, сохранить отчёт и подтвердить восстановление S0:
+
+```sh
+LAB2_SKIP_BUILD=1 LAB2_FAIL_STAGE=integration ./infra/testing/lab2/run.sh full
+LAB2_SKIP_BUILD=1 LAB2_FAIL_STAGE=e2e ./infra/testing/lab2/run.sh full
+```
+
+Для прерывания с живым deployment задайте отдельные пути, дождитесь `pause-ready` и отправьте TERM внешнему скрипту; он вернёт 143 после финализации:
+
+```sh
+LAB2_RESULTS_DIR="$PWD/test-results/lab2/interruption-demo" \
+LAB2_SKIP_BUILD=1 LAB2_PAUSE_STAGE=e2e ./infra/testing/lab2/run.sh full > /tmp/lab2-interrupt.log 2>&1 &
+pid=$!
+while [ ! -f test-results/lab2/interruption-demo/pause-ready ]; do sleep 1; done
+kill -TERM "$pid"
+wait "$pid"
+```
+
+Используйте новый пустой каталог для каждого повтора. Для демонстрации прерывания integration аналогично задайте `LAB2_PAUSE_STAGE=integration`. В `summary.json` прерванная стадия broken, следующие skipped, cleanup passed; в `cleanup.log` видна проверка S0 до удаления БД. Если внешний процесс был остановлен до срабатывания trap, CI вызывает `run.sh finalize` с теми же `LAB2_PROJECT`, `LAB2_RESULTS_DIR` и `LAB2_HISTORY_DIR`.
 

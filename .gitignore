@@ -4,3 +4,5 @@ user-service/keys/
 /test-results/
 allure-results/
 /.test-tools/
+_bmad
+_bmad-output
