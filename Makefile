@@ -225,7 +225,7 @@ test-unit-allure: ## Запустить unit-тесты, собрать и от�
 
 .PHONY: test-pipeline test-integration
 test-pipeline: ## ЛР №2: unit → integration → E2E в изолированных контейнерах
-	./infra/testing/lab2/run.sh full
+	python3 infra/testing/run_test_pipeline.py full
 
 test-integration: ## Запустить интеграционные тесты сервисов с PostgreSQL в контейнерах
-	./infra/testing/lab2/run.sh integration
+	python3 infra/testing/run_test_pipeline.py integration

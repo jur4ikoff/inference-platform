@@ -3,6 +3,7 @@
 user-service/keys/
 /test-results/
 allure-results/
+__pycache__/
 /.test-tools/
 _bmad
 _bmad-output

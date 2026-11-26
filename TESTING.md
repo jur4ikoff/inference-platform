@@ -231,28 +231,36 @@ cat test-results/processes/processes.tsv
 
 ## 7. ЛР №2: контейнерный pipeline
 
-Из корня репозитория выполните `make test-pipeline`. Нужны Docker с Compose v2, доступ к Docker socket и сеть для первой сборки зависимостей. Хостовые Go, PostgreSQL, Java и Allure не нужны. Один образ runner содержит Go 1.26.5, зависимости из `go.mod`/`go.sum`, Allure 2, curl/tcpdump и собранные штатные бинарники трёх сервисов и bootstrap-admin. В build-контейнер передаётся snapshot текущих исходников (без ключей и `.env`), оформляется как временный Git-репозиторий и клонируется внутри контейнера; бинарники и тесты используют эту же клонированную копию. Так локальные незакоммиченные изменения включены в проверку, а в CI snapshot основан на checkout проверяемого коммита. `commit.txt`, `worktree.txt` и `snapshot-revision.txt` сохраняют исходный HEAD, наличие локальных изменений и ревизию временного snapshot; рабочий Git-репозиторий скрипт не изменяет.
+Локальный стенд использует `infra/docker-compose.yaml` с переопределениями из
+`infra/testing/compose.test.yaml`. Для полного прогона
+`infra/testing/e2e/compose.yaml` задаёт образ модели и отключает публикацию
+портов Nginx и Grafana. E2E использует штатные образы сервисов, конфигурацию
+`nginx/nginx.conf` и зависимости из основного Compose. Сервисы запускаются в
+отдельной сети, а PostgreSQL хранит данные прогона в `tmpfs`. Для прогона нужен
+Compose 2.24.4 или новее.
 
-Порядок: миграции и bootstrap → unit ЛР №1 → ровно три `TestServiceIntegration` → один E2E через curl. Новые integration исключены из unit и запускаются с `-count=1`, каждый использует настоящий сервисный слой, репозиторий и PostgreSQL. Только Docker runtime в integration inference-service заменён fake. Отсутствие DSN, пропуск или отсутствие одного из трёх результатов завершают обязательный integration-прогон ошибкой. Unit-тесты запускаются через `make test-unit`, тесты репозиториев — через `make test-repository-integration`, а три теста сервисов — через `make test-integration`.
+Из корня репозитория выполните `make test-pipeline`. Нужны Docker с Compose v2, доступ к Docker socket и сеть для первой сборки зависимостей. На хосте нужен Python 3. Go, PostgreSQL, Java и Allure работают в контейнерах. Один образ runner содержит Go 1.26.5, зависимости из `go.mod`/`go.sum`, Allure 2, Python и утилиту `bootstrap-admin`. В build-контейнер передаётся snapshot текущих исходников (без ключей и `.env`), оформляется как временный Git-репозиторий и клонируется внутри контейнера; bootstrap-admin и тесты используют эту клонированную копию, а образы сервисов собираются их штатными Dockerfile из того же рабочего дерева. Так локальные незакоммиченные изменения включены в проверку, а в CI snapshot основан на checkout проверяемого коммита. `commit.txt`, `worktree.txt` и `snapshot-revision.txt` сохраняют исходный HEAD, наличие локальных изменений и ревизию временного snapshot; рабочий Git-репозиторий скрипт не изменяет.
 
-E2E входит через Nginx, выполняет login, создаёт проект, получает project token, создаёт Hugging Face модель, запускает deployment с `Idempotency-Key`, ждёт running, останавливает и удаляет модель, проверяет 404. `INFERENCE_SERVER_IMAGE` указывает на маленький HTTP fixture, принимающий аргументы llama без скачивания весов и записи в `/cache`. Реальными остаются три сервиса, PostgreSQL, Nginx и Docker.
+Порядок: миграции и bootstrap → unit ЛР №1 → ровно три `TestServiceIntegration` → один E2E на Python через HTTP. Новые integration исключены из unit и запускаются с `-count=1`, каждый использует настоящий сервисный слой, репозиторий и PostgreSQL. Только Docker runtime в integration inference-service заменён fake. Отсутствие DSN, пропуск или отсутствие одного из трёх результатов завершают обязательный integration-прогон ошибкой. Unit-тесты запускаются через `make test-unit`, тесты репозиториев — через `make test-repository-integration`, а три теста сервисов — через `make test-integration`.
 
-Каждый вызов создаёт проект `lab2-<время>-<pid>-<случайное число>`, отдельную сеть и PostgreSQL без фиксированных host-портов/имён. Результаты печатаются в начале и сохраняются в `test-results/lab2/<project>/`. При ошибке следующие стадии не выполняются и показаны skipped. Обработчик EXIT/INT/TERM останавливает писателей и только модельные контейнеры сети этого прогона, пересоздаёт тестовую БД, применяет все штатные миграции и seed, проверяет S0 SQL-запросами и удаляет ресурсы Compose. Общие ML-кеши и чужие контейнеры не удаляются. SIGKILL всей машины не обрабатывается.
+E2E находится в `infra/testing/e2e/`. Тест на `unittest` входит через Nginx, создаёт проект и получает project token, создаёт модель, запускает её, проверяет реальную генерацию через `POST /inference/{project}/{model}/completion` и останавливает deployment. Используется CPU-образ llama.cpp и модель [Stories260K](https://huggingface.co/ggml-org/tiny-llamas/blob/main/stories260K.gguf) размером 1,19 МБ. При первом запуске llama.cpp загружает веса с Hugging Face.
 
-Артефакты: `summary.json`, `unit/` и `integration/` с Go JSON и native Allure, `allure-report/`, `setup.log`, `cleanup.log` с `S0 verified`, `stand.log`, `runner.log`, `e2e.log`, `traffic.pcap`, читаемый `traffic.txt`. Tcpdump снимает HTTP-трафик curl на интерфейсе тестовой сети перед login и до конца E2E; запись содержит только тестовые пароли/токены. Посмотреть её можно командой `tcpdump -nn -A -r <каталог-прогона>/traffic.pcap`; открыть отчёт — `allure open <каталог-прогона>/allure-report` при наличии локального Allure CLI. Не публикуйте каталог `keys/`; CI исключает его из артефакта.
+Каждый вызов создаёт проект `lab2-<время>-<pid>-<случайное число>`, отдельную сеть и PostgreSQL без фиксированных host-портов/имён. Результаты печатаются в начале и сохраняются в `test-results/lab2/<project>/`. При ошибке следующие стадии не выполняются и показаны skipped. Финализация при завершении, SIGINT или SIGTERM останавливает писателей и только модельные контейнеры сети этого прогона, пересоздаёт тестовую БД, применяет все штатные миграции и seed, проверяет S0 SQL-запросами и удаляет ресурсы Compose. Общие ML-кеши и чужие контейнеры не удаляются. SIGKILL всей машины не обрабатывается.
 
-История лежит отдельно в `test-results/lab2/history/`: следующий отчёт забирает только `history/`, сырые результаты предыдущего прогона не переносятся. Обновление истории защищено блокировкой при конкурентном завершении. Путь можно изменить через `LAB2_HISTORY_DIR`; `LAB2_RESULTS_DIR` должен указывать на новый пустой каталог. `.github/workflows/testing.yaml` запускает тот же runner, всегда выполняет финализацию, сохраняет отчёты/pcap как artifact и переносит историю через GitHub Actions cache. Удалённый запуск CI требует push или ручного workflow_dispatch.
+В каталоге прогона сохраняются `summary.json`, Go JSON и native Allure в `unit/` и `integration/`, HTML-отчёт `allure-report/`, логи подготовки, стенда и runner, `e2e.log` с HTTP-статусами и ответом модели, а также `cleanup.log` с подтверждением `S0 verified`. Дамп трафика можно снять вручную. Для просмотра сохранённого отчёта на хосте с Allure CLI используйте `allure open <каталог-прогона>/allure-report`. CI исключает каталог `keys/` из артефактов.
+
+История лежит отдельно в `test-results/lab2/history/`: следующий отчёт забирает только `history/`, сырые результаты предыдущего прогона не переносятся. Обновление истории защищено блокировкой при конкурентном завершении. Путь можно изменить через `LAB2_HISTORY_DIR`; `LAB2_RESULTS_DIR` должен указывать на новый пустой каталог. `.github/workflows/testing.yaml` запускает тот же runner, всегда выполняет финализацию, сохраняет отчёты как artifact и переносит историю через GitHub Actions cache. Удалённый запуск CI требует push или ручного workflow_dispatch.
 
 ### Демонстрация повторяемости и изоляции
 
-Команда `make test-integration` запускает три интеграционных сценария сервисов. После первой сборки `LAB2_SKIP_BUILD=1` переиспользует runner; при изменении исходников сначала выполните обычную сборку. По три integration выполняются два раза последовательно и два раза одновременно:
+Команда `make test-integration` запускает три интеграционных сценария сервисов. После первой сборки `LAB2_SKIP_BUILD=1` переиспользует runner; после изменения тестов или `bootstrap-admin` выполните обычную сборку. По три integration выполняются два раза последовательно и два раза одновременно:
 
 ```sh
-LAB2_SKIP_BUILD=1 ./infra/testing/lab2/run.sh integration
-LAB2_SKIP_BUILD=1 ./infra/testing/lab2/run.sh integration
-LAB2_SKIP_BUILD=1 ./infra/testing/lab2/run.sh integration > /tmp/lab2-a.log 2>&1 &
+LAB2_SKIP_BUILD=1 python3 infra/testing/run_test_pipeline.py integration
+LAB2_SKIP_BUILD=1 python3 infra/testing/run_test_pipeline.py integration
+LAB2_SKIP_BUILD=1 python3 infra/testing/run_test_pipeline.py integration > /tmp/lab2-a.log 2>&1 &
 a=$!
-LAB2_SKIP_BUILD=1 ./infra/testing/lab2/run.sh integration > /tmp/lab2-b.log 2>&1 &
+LAB2_SKIP_BUILD=1 python3 infra/testing/run_test_pipeline.py integration > /tmp/lab2-b.log 2>&1 &
 b=$!
 wait "$a"
 wait "$b"
@@ -265,20 +273,20 @@ wait "$b"
 Контроли ниже предназначены для ручной демонстрации, не добавляют продуктовых сценариев. `LAB2_FAIL_STAGE=integration` вызывает отказ после интеграционных проверок: unit/integration имеют результаты, E2E skipped. `LAB2_FAIL_STAGE=e2e` вызывает отказ после перехода реального deployment в running, до остановки модели. Оба вызова должны завершиться с ненулевым кодом, сохранить отчёт и подтвердить восстановление S0:
 
 ```sh
-LAB2_SKIP_BUILD=1 LAB2_FAIL_STAGE=integration ./infra/testing/lab2/run.sh full
-LAB2_SKIP_BUILD=1 LAB2_FAIL_STAGE=e2e ./infra/testing/lab2/run.sh full
+LAB2_SKIP_BUILD=1 LAB2_FAIL_STAGE=integration python3 infra/testing/run_test_pipeline.py full
+LAB2_SKIP_BUILD=1 LAB2_FAIL_STAGE=e2e python3 infra/testing/run_test_pipeline.py full
 ```
 
 Для прерывания с живым deployment задайте отдельные пути, дождитесь `pause-ready` и отправьте TERM внешнему скрипту; он вернёт 143 после финализации:
 
 ```sh
 LAB2_RESULTS_DIR="$PWD/test-results/lab2/interruption-demo" \
-LAB2_SKIP_BUILD=1 LAB2_PAUSE_STAGE=e2e ./infra/testing/lab2/run.sh full > /tmp/lab2-interrupt.log 2>&1 &
+LAB2_SKIP_BUILD=1 LAB2_PAUSE_STAGE=e2e python3 infra/testing/run_test_pipeline.py full > /tmp/lab2-interrupt.log 2>&1 &
 pid=$!
 while [ ! -f test-results/lab2/interruption-demo/pause-ready ]; do sleep 1; done
 kill -TERM "$pid"
 wait "$pid"
 ```
 
-Используйте новый пустой каталог для каждого повтора. Для демонстрации прерывания integration аналогично задайте `LAB2_PAUSE_STAGE=integration`. В `summary.json` прерванная стадия broken, следующие skipped, cleanup passed; в `cleanup.log` видна проверка S0 до удаления БД. Если внешний процесс был остановлен до срабатывания trap, CI вызывает `run.sh finalize` с теми же `LAB2_PROJECT`, `LAB2_RESULTS_DIR` и `LAB2_HISTORY_DIR`.
+Используйте новый пустой каталог для каждого повтора. Для демонстрации прерывания integration аналогично задайте `LAB2_PAUSE_STAGE=integration`. В `summary.json` прерванная стадия broken, следующие skipped, cleanup passed; в `cleanup.log` видна проверка S0 до удаления БД. Если внешний процесс был остановлен до завершения очистки, CI вызывает `python3 infra/testing/run_test_pipeline.py finalize` с теми же `LAB2_PROJECT`, `LAB2_RESULTS_DIR` и `LAB2_HISTORY_DIR`.
 

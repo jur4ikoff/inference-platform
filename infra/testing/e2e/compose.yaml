@@ -1,0 +1,18 @@
+# Applied after the shared test stand for full pipeline runs.
+services:
+  inference-service:
+    environment:
+      INFERENCE_SERVER_IMAGE: ${LAB2_MODEL_IMAGE:?set LAB2_MODEL_IMAGE}
+
+  nginx:
+    ports: !reset []
+
+  grafana:
+    ports: !reset []
+
+  e2e-model:
+    image: ${LAB2_MODEL_IMAGE}
+    build:
+      context: ./infra/testing/e2e
+      dockerfile: model.Dockerfile
+    profiles: [build]

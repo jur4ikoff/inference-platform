@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small bridge from native Go Allure results and shell stages to Allure 2."""
+"""Small bridge from native Go Allure results and pipeline stages to Allure 2."""
 import fcntl
 import hashlib
 import json
@@ -22,8 +22,8 @@ def read_object(path):
     return data
 
 
-def event(name, status, message=""):
-    path = ROOT / "stages" / f"{name}.json"
+def event(name, status, message="", *, root=ROOT):
+    path = root / "stages" / f"{name}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     now = int(time.time() * 1000)
     try:
@@ -134,8 +134,9 @@ def generate():
                    full_name=module + "/internal/service/integration_test.go/TestServiceIntegration")
     for name in ("setup", "unit", "integration", "e2e", "cleanup"):
         state = stages[name]
-        result(out, name if name != "e2e" else "E2E model lifecycle (curl + tcpdump)",
-               state["status"], state.get("message", ""), state.get("start"), state.get("stop"))
+        result(out, name if name != "e2e" else "E2E model lifecycle",
+               state["status"], state.get("message", ""), state.get("start"), state.get("stop"),
+               full_name="lab2/E2E model lifecycle (curl + tcpdump)" if name == "e2e" else None)
     (ROOT / "summary.json").write_text(json.dumps(stages, indent=2))
     HISTORY.mkdir(parents=True, exist_ok=True)
     # Concurrent runs merge no raw results and serialize history replacement.

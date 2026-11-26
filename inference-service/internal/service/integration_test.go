@@ -15,19 +15,10 @@ import (
 	"github.com/jur4ikoff/inference-service/internal/domain"
 	"github.com/jur4ikoff/inference-service/internal/repository"
 	"github.com/jur4ikoff/inference-service/internal/service"
+	"go.uber.org/mock/gomock"
 )
 
-type lab2Runtime struct{ started string }
-
-func (*lab2Runtime) EnsureImage(context.Context, string) error { return nil }
-func (*lab2Runtime) CreateContainer(context.Context, string, string, domain.DeploymentSpec) (string, error) {
-	return "lab2-" + uuid.NewString(), nil
-}
-func (r *lab2Runtime) StartContainer(_ context.Context, id string) error { r.started = id; return nil }
-func (*lab2Runtime) RemoveContainer(context.Context, string) error       { return nil }
-func (*lab2Runtime) StopContainer(context.Context, string) error         { return nil }
-
-// AAA: only Docker is fake; deployment persistence uses real PostgreSQL.
+// AAA: Docker calls use GoMock and deployment persistence uses real PostgreSQL.
 func TestServiceIntegration(t *testing.T) {
 	dsn := os.Getenv("INFERENCE_TEST_DATABASE_URL")
 	if dsn == "" {
@@ -52,9 +43,18 @@ func TestServiceIntegration(t *testing.T) {
 				t.Error(err)
 			}
 		}()
-		runtime := &lab2Runtime{}
-		svc := service.NewDeploymentService(repository.NewDeploymentRepository(tx), config.ServiceConfig{InferenceServerImage: "lab2-fixture"}, runtime)
-		command := service.StartDeploymentCommand{Project: "lab2-integration", Username: "labadmin", ModelID: uuid.New(), DeploymentName: "lab2-model", Spec: domain.DeploymentSpec{ProviderType: domain.ModelProviderTypeHuggingFace, ProviderHuggingFace: &domain.HuggingFaceProvider{Repo: "lab2/fixture"}}}
+		const image = "llama:server"
+		command := deploymentCommand()
+		containerID := uuid.NewString()
+		ctrl := gomock.NewController(t)
+		defer ctrl.Finish()
+		runtime := NewMockRuntimeClient(ctrl)
+		gomock.InOrder(
+			runtime.EXPECT().CreateContainer(gomock.Any(), image, gomock.Any(), command.Spec).Return(containerID, nil),
+			runtime.EXPECT().StartContainer(gomock.Any(), containerID).Return(nil),
+		)
+
+		svc := service.NewDeploymentService(repository.NewDeploymentRepository(tx), config.ServiceConfig{InferenceServerImage: image}, runtime)
 		created, err := svc.StartDeployment(ctx, command)
 		if err != nil {
 			t.Fatal(err)
@@ -63,7 +63,7 @@ func TestServiceIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if saved.ID == uuid.Nil || saved.ID != created.ID || saved.ModelID != command.ModelID || saved.Project != command.Project || saved.Status != domain.StatusPending || saved.ContainerID != runtime.started {
+		if saved.ID == uuid.Nil || saved.ID != created.ID || saved.ModelID != command.ModelID || saved.Project != command.Project || saved.Status != domain.StatusPending || saved.ContainerID != containerID {
 			t.Fatalf("incorrect persisted deployment: %+v", saved)
 		}
 	})

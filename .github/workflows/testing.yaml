@@ -23,13 +23,22 @@ jobs:
           restore-keys: |
             allure-lab2-${{ github.ref_name }}-
       - name: Unit → integration → E2E (container runner)
-        run: ./infra/testing/lab2/run.sh full
+        run: python3 infra/testing/run_test_pipeline.py full
       - name: Finalize after cancellation or early failure
         if: always()
         run: |
           if [ ! -f "$LAB2_RESULTS_DIR/report-complete" ] && docker image inspect inference-lab2-runner:local >/dev/null 2>&1; then
-            ./infra/testing/lab2/run.sh finalize
+            python3 infra/testing/run_test_pipeline.py finalize
           fi
+      - name: Set ownership of test outputs for the GitHub runner
+        if: always()
+        run: |
+          owner="$(id -u):$(id -g)"
+          for directory in "$LAB2_RESULTS_DIR" "$LAB2_HISTORY_DIR"; do
+            if [ -d "$directory" ]; then
+              sudo chown -hR -- "$owner" "$directory"
+            fi
+          done
       - name: Save Allure history
         if: always()
         uses: actions/cache/save@v5
