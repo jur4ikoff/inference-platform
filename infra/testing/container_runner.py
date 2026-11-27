@@ -47,7 +47,7 @@ def interrupt(signum, _frame):
     raise RunnerInterrupted(128 + signum)
 
 
-def run_pipeline():
+def run_pipeline(*, capture=False):
     signal.signal(signal.SIGINT, interrupt)
     signal.signal(signal.SIGTERM, interrupt)
     shutil.copyfile("/usr/local/share/test-snapshot-revision", RESULTS / "snapshot-revision.txt")
@@ -60,7 +60,7 @@ def run_pipeline():
             if stage == "integration" and os.environ.get("TEST_PAUSE_STAGE") == stage:
                 (RESULTS / "pause-ready").touch()
                 time.sleep(300)
-            status = run_e2e() if stage == "e2e" else run_go_tests(stage)
+            status = run_e2e(capture=capture) if stage == "e2e" else run_go_tests(stage)
             if injected_failure == stage:
                 status = 1
             if stage == "integration" and status == 0:
@@ -81,7 +81,9 @@ def run_pipeline():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("pipeline", "setup", "ready", "report"), nargs="?", default="pipeline")
-    action = parser.parse_args().action
+    parser.add_argument("--capture", action="store_true")
+    args = parser.parse_args()
+    action = args.action
     if action == "setup":
         prepare_database()
     elif action == "report":
@@ -90,7 +92,7 @@ def main():
         return wait_ready()
     else:
         try:
-            return run_pipeline()
+            return run_pipeline(capture=args.capture)
         except RunnerInterrupted as error:
             return error.args[0]
     return 0

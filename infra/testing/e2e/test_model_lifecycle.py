@@ -1,9 +1,11 @@
 """Exercise the model lifecycle through the real HTTP gateway."""
-from contextlib import redirect_stdout
+from contextlib import contextmanager, nullcontext, redirect_stdout
 from http import HTTPStatus
 import http.client
 import json
 import os
+import signal
+import subprocess
 import time
 import unittest
 
@@ -127,9 +129,36 @@ class ModelLifecycleTest(unittest.TestCase):
         print(f"Model completion: {completion['content']!r}")
 
 
-def run_e2e():
+@contextmanager
+def capture_http():
+    capture_log = RESULTS / "capture.log"
+    command = ("tcpdump", "-i", "eth0", "-p", "-nn", "-s", "0", "--immediate-mode", "-U", "-w", "-",
+               "host nginx and tcp port 80")
+    with (RESULTS / "model-lifecycle-auto.pcap").open("wb") as dump, capture_log.open("w") as log:
+        with subprocess.Popen(command, stdout=dump, stderr=log) as capture:
+            try:
+                deadline = time.monotonic() + 5
+                while "listening on " not in capture_log.read_text():
+                    if capture.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError("tcpdump did not start; see capture.log")
+                    time.sleep(0.05)
+                yield
+            finally:
+                if capture.poll() is None:
+                    capture.send_signal(signal.SIGINT)
+                try:
+                    status = capture.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    capture.kill()
+                    raise
+            if status != 0:
+                raise subprocess.CalledProcessError(status, command)
+
+
+def run_e2e(*, capture=False):
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(ModelLifecycleTest)
-    with (RESULTS / "e2e.log").open("w") as log, redirect_stdout(log):
+    packet_capture = capture_http() if capture else nullcontext()
+    with packet_capture, (RESULTS / "e2e.log").open("w") as log, redirect_stdout(log):
         result = unittest.TextTestRunner(stream=log, verbosity=2).run(suite)
     return 0 if result.wasSuccessful() else 1
 

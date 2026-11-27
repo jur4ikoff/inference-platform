@@ -20,8 +20,9 @@ RUN_MODES = ("full", *TEST_STAGES)
 
 
 class TestPipeline:
-    def __init__(self, mode):
+    def __init__(self, mode, *, capture=False):
         self.finalizing = mode == "finalize"
+        self.capture = capture
         project = os.environ.get("TEST_PROJECT")
         if self.finalizing and not project:
             raise ValueError("finalize requires the original TEST_PROJECT")
@@ -134,7 +135,8 @@ class TestPipeline:
                 self.runner_task("ready", "ready.log")
             self.stage("setup", "passed")
 
-        self.compose("run", "-d", "--no-deps", "--name", self.runner, "runner", "pipeline")
+        runner_args = ("--capture",) if self.capture else ()
+        self.compose("run", "-d", "--no-deps", "--name", self.runner, "runner", "pipeline", *runner_args)
         with (self.results / "runner.log").open("w") as output:
             self.docker("logs", "--follow", self.runner, stdout=output, stderr=subprocess.STDOUT)
         return int(self.docker("wait", self.runner, capture_output=True).stdout.strip())
@@ -234,8 +236,12 @@ def interrupt(signum, _frame):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=(*RUN_MODES, "finalize"), nargs="?", default="full")
+    parser.add_argument("--capture", action="store_true", help="record E2E HTTP traffic to a pcap file")
+    args = parser.parse_args()
+    if args.capture and args.mode != "e2e":
+        parser.error("--capture requires e2e mode")
     try:
-        pipeline = TestPipeline(parser.parse_args().mode)
+        pipeline = TestPipeline(args.mode, capture=args.capture)
         pipeline.initialize()
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         print(error, file=sys.stderr)

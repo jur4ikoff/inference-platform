@@ -1,7 +1,7 @@
 FROM docker:28-cli AS docker-cli
 FROM golang:1.26.5-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl python3 postgresql-client openssl default-jre-headless unzip \
+    curl python3 postgresql-client openssl default-jre-headless unzip tcpdump \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 ARG ALLURE_VERSION=2.46.2
