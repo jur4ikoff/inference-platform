@@ -16,14 +16,14 @@ COPY model-service ./model-service
 COPY inference-service ./inference-service
 COPY infra/testing ./infra/testing
 COPY infra/postgres/migrations ./infra/postgres/migrations
-ARG LAB2_SOURCE_REVISION=unknown
+ARG TEST_SOURCE_REVISION=unknown
 # Run tests and build bootstrap-admin from a Git snapshot of the current worktree.
 RUN git init /src && git -C /src add . && \
-    git -C /src -c user.name=Lab2 -c user.email=lab2@example.test commit -m "Source ${LAB2_SOURCE_REVISION} with workspace overlay" && \
+    git -C /src -c user.name="Test Runner" -c user.email=test-runner@example.test commit -m "Source ${TEST_SOURCE_REVISION} with workspace overlay" && \
     git clone --no-local /src /checked-source && rm -rf /src && mv /checked-source /src && \
-    git -C /src rev-parse HEAD > /usr/local/share/lab2-snapshot-revision
+    git -C /src rev-parse HEAD > /usr/local/share/test-snapshot-revision
 RUN cd user-service && go mod download && CGO_ENABLED=0 go build -o /usr/local/bin/bootstrap-admin ./cmd/bootstrap-admin
 RUN cd model-service && go mod download
 RUN cd inference-service && go mod download
-ENV OTEL_ENABLED=false DATABASE_URL=postgres://test:test@postgres:5432/lab2?sslmode=disable
+ENV OTEL_ENABLED=false DATABASE_URL=postgres://test:test@postgres:5432/inference_test?sslmode=disable
 ENTRYPOINT ["python3", "-u", "/src/infra/testing/container_runner.py"]

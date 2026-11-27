@@ -1,4 +1,4 @@
-name: Testing (Labs 1 and 2)
+name: Testing
 on:
   push:
   pull_request:
@@ -7,34 +7,51 @@ permissions:
   contents: read
 jobs:
   testing:
+    name: ${{ matrix.stage }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        stage: [unit, integration, e2e]
     env:
-      LAB2_PROJECT: lab2-ci-${{ github.run_id }}-${{ github.run_attempt }}
-      LAB2_RESULTS_DIR: ${{ github.workspace }}/test-results/lab2/current
-      LAB2_HISTORY_DIR: ${{ github.workspace }}/test-results/lab2/history
+      TEST_PROJECT: inference-tests-ci-${{ matrix.stage }}-${{ github.run_id }}-${{ github.run_attempt }}
+      TEST_RESULTS_DIR: ${{ github.workspace }}/test-results/pipeline/${{ matrix.stage }}
+      TEST_HISTORY_DIR: ${{ github.workspace }}/test-results/pipeline/history/${{ matrix.stage }}
     steps:
       - uses: actions/checkout@v6
+      - name: Set up Go for lint
+        if: matrix.stage == 'unit'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: user-service/go.mod
+          cache-dependency-path: '**/go.sum'
+      - name: Run linters
+        if: matrix.stage == 'unit'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/prek"
+          "$RUNNER_TEMP/prek/bin/python" -m pip install 'prek==0.4.13'
+          make lint PREK="$RUNNER_TEMP/prek/bin/prek"
       - name: Restore Allure history
         uses: actions/cache/restore@v5
         with:
-          path: test-results/lab2/history
-          key: allure-lab2-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.TEST_HISTORY_DIR }}
+          key: allure-tests-${{ matrix.stage }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            allure-lab2-${{ github.ref_name }}-
-      - name: Unit → integration → E2E (container runner)
-        run: python3 infra/testing/run_test_pipeline.py full
+            allure-tests-${{ matrix.stage }}-${{ github.ref_name }}-
+      - name: Run ${{ matrix.stage }} tests
+        run: python3 infra/testing/run_test_pipeline.py "${{ matrix.stage }}"
       - name: Finalize after cancellation or early failure
         if: always()
         run: |
-          if [ ! -f "$LAB2_RESULTS_DIR/report-complete" ] && docker image inspect inference-lab2-runner:local >/dev/null 2>&1; then
+          if [ ! -f "$TEST_RESULTS_DIR/report-complete" ] && docker image inspect inference-test-runner:local >/dev/null 2>&1; then
             python3 infra/testing/run_test_pipeline.py finalize
           fi
       - name: Set ownership of test outputs for the GitHub runner
         if: always()
         run: |
           owner="$(id -u):$(id -g)"
-          for directory in "$LAB2_RESULTS_DIR" "$LAB2_HISTORY_DIR"; do
+          for directory in "$TEST_RESULTS_DIR" "$TEST_HISTORY_DIR"; do
             if [ -d "$directory" ]; then
               sudo chown -hR -- "$owner" "$directory"
             fi
@@ -43,15 +60,15 @@ jobs:
         if: always()
         uses: actions/cache/save@v5
         with:
-          path: test-results/lab2/history
-          key: allure-lab2-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Retain report, traffic and restoration evidence
+          path: ${{ env.TEST_HISTORY_DIR }}
+          key: allure-tests-${{ matrix.stage }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Upload test reports and logs
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: lab2-${{ github.run_id }}-${{ github.run_attempt }}
+          name: tests-${{ matrix.stage }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            test-results/lab2/current/**
-            !test-results/lab2/current/keys/**
+            ${{ env.TEST_RESULTS_DIR }}/**
+            !${{ env.TEST_RESULTS_DIR }}/keys/**
           if-no-files-found: warn
           retention-days: 14

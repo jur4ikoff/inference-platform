@@ -38,7 +38,7 @@ class ModelLifecycleTest(unittest.TestCase):
         return response.status, json.loads(content)
 
     def test_model_lifecycle(self):
-        project = "lab2-e2e"
+        project = "e2e-model-lifecycle"
         project_path = f"/api/v1/projects/{project}"
         _, login = self.request(
             "POST", "/api/v1/auth/login", HTTPStatus.OK,
@@ -70,7 +70,7 @@ class ModelLifecycleTest(unittest.TestCase):
         deployment_path = f"{model_path}/deployment"
 
         _, deployment = self.request(
-            "POST", deployment_path, HTTPStatus.ACCEPTED, idempotency_key="lab2-lifecycle",
+            "POST", deployment_path, HTTPStatus.ACCEPTED, idempotency_key="e2e-model-start",
         )
         self.assertTrue(deployment["id"])
         for _ in range(45):
@@ -86,10 +86,10 @@ class ModelLifecycleTest(unittest.TestCase):
         self.check_inference(f"/inference/{project}/{MODEL_NAME}")
 
         # The interruption demo pauses while the deployment is still running.
-        if os.environ.get("LAB2_PAUSE_STAGE") == "e2e":
+        if os.environ.get("TEST_PAUSE_STAGE") == "e2e":
             (RESULTS / "pause-ready").touch()
             time.sleep(300)
-        self.assertNotEqual(os.environ.get("LAB2_FAIL_STAGE"), "e2e", "Injected E2E failure")
+        self.assertNotEqual(os.environ.get("TEST_FAIL_STAGE"), "e2e", "Injected E2E failure")
 
         self.request("DELETE", deployment_path, HTTPStatus.ACCEPTED, HTTPStatus.NO_CONTENT)
         for _ in range(45):

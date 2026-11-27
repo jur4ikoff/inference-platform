@@ -1,7 +1,7 @@
 # Applied after infra/docker-compose.yaml from the repository root.
 services:
   postgres:
-    image: inference-lab2-postgres:local
+    image: inference-test-postgres:local
     restart: "no"
     ports: !reset []
     volumes: !override
@@ -23,21 +23,21 @@ services:
     env_file: !reset []
     ports: !reset []
     environment:
-      CONTAINER_METRICS_PROJECTS: ${LAB2_PROJECT:?set LAB2_PROJECT}
+      CONTAINER_METRICS_PROJECTS: ${TEST_PROJECT:?set TEST_PROJECT}
       DEPLOYMENT_MANAGER_SYNC_INTERVAL: 1s
 
   runner:
-    image: ${LAB2_RUNNER_IMAGE}
+    image: ${TEST_RUNNER_IMAGE}
     build:
       context: .
       dockerfile: infra/testing/test-runner.Dockerfile
       args:
-        LAB2_SOURCE_REVISION: ${LAB2_SOURCE_REVISION:-unknown}
+        TEST_SOURCE_REVISION: ${TEST_SOURCE_REVISION:-unknown}
     environment:
-      LAB2_MODE: ${LAB2_MODE:-full}
-      LAB2_FAIL_STAGE: ${LAB2_FAIL_STAGE:-}
-      LAB2_PAUSE_STAGE: ${LAB2_PAUSE_STAGE:-}
-      LAB2_PROJECT: ${LAB2_PROJECT}
+      TEST_MODE: ${TEST_MODE:-full}
+      TEST_FAIL_STAGE: ${TEST_FAIL_STAGE:-}
+      TEST_PAUSE_STAGE: ${TEST_PAUSE_STAGE:-}
+      TEST_PROJECT: ${TEST_PROJECT}
     volumes:
-      - ${LAB2_RESULTS_DIR:?set LAB2_RESULTS_DIR}:/results
-      - ${LAB2_HISTORY_DIR:?set LAB2_HISTORY_DIR}:/history
+      - ${TEST_RESULTS_DIR:?set TEST_RESULTS_DIR}:/results
+      - ${TEST_HISTORY_DIR:?set TEST_HISTORY_DIR}:/history

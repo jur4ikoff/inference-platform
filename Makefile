@@ -49,7 +49,7 @@ help: ## Показать доступные команды
 		'  allure-open         Открыть результаты последнего прогона в Allure' \
 		'  generate-mocks      Сгенерировать тестовые моки inference-service' \
 		'  test-repository-integration  Интеграционные тесты репозиториев с PostgreSQL' \
-		'  test-pipeline           ЛР №2: unit → integration → E2E в Docker' \
+		'  test-pipeline           unit → integration → E2E в Docker' \
 		'  test-integration    Интеграционные тесты сервисов с PostgreSQL' \
 		'  test-shuffle        Запустить unit-тесты в случайном порядке' \
 		'  test-coverage       Сформировать отчёты покрытия операторов' \
@@ -224,7 +224,7 @@ test-unit-allure: ## Запустить unit-тесты, собрать и от�
 	$(MAKE) allure-open ALLURE_RESULTS=unit || status=1; exit $$status
 
 .PHONY: test-pipeline test-integration
-test-pipeline: ## ЛР №2: unit → integration → E2E в изолированных контейнерах
+test-pipeline: ## unit → integration → E2E в изолированных контейнерах
 	python3 infra/testing/run_test_pipeline.py full
 
 test-integration: ## Запустить интеграционные тесты сервисов с PostgreSQL в контейнерах

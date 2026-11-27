@@ -5,13 +5,14 @@ import subprocess
 
 RESULTS = Path("/results")
 MIGRATIONS = Path(__file__).resolve().parents[1] / "postgres" / "migrations"
-ADMIN_LOGIN = "labadmin"
-ADMIN_PASSWORD = "lab2-password"
+TEST_DATABASE_NAME = "inference_test"
+ADMIN_LOGIN = "testadmin"
+ADMIN_PASSWORD = "test-admin-password"
 
 VERIFY_STATE = """
 DO $$ BEGIN
   IF (SELECT count(*) FROM users) <> 1
-     OR (SELECT count(*) FROM users WHERE login='labadmin' AND platform_role='admin' AND password_hash LIKE '$argon2id$%') <> 1
+     OR (SELECT count(*) FROM users WHERE login='testadmin' AND platform_role='admin' AND password_hash LIKE '$argon2id$%') <> 1
      OR (SELECT count(*) FROM roles) <> 3
      OR (SELECT count(*) FROM roles WHERE system_key IN ('teamlead','developer','viewer')) <> 3
      OR (SELECT count(*) FROM projects) <> 0
@@ -31,20 +32,20 @@ def prepare_database(*, verify_only=False, stdout=None):
     # This host resolves only inside the per-run Compose network.
     env = dict(os.environ, PGHOST="postgres", PGUSER="test", PGPASSWORD="test")
 
-    def run(*args, database="lab2", input_text=None):
+    def run(*args, database=TEST_DATABASE_NAME, input_text=None):
         subprocess.run(
             args, env=dict(env, PGDATABASE=database), text=True,
             input=input_text, stdout=stdout, stderr=subprocess.STDOUT, check=True,
         )
 
     if not verify_only:
-        run("dropdb", "--if-exists", "--force", "lab2", database="postgres")
-        run("createdb", "lab2", database="postgres")
+        run("dropdb", "--if-exists", "--force", TEST_DATABASE_NAME, database="postgres")
+        run("createdb", TEST_DATABASE_NAME, database="postgres")
         for migration in sorted(MIGRATIONS.glob("*.sql")):
             run("psql", "-v", "ON_ERROR_STOP=1", "-f", str(migration))
         run(
-            "bootstrap-admin", "--login", ADMIN_LOGIN, "--email", "labadmin@example.test",
-            "--firstname", "Lab", "--lastname", "Admin", "--password-stdin",
+            "bootstrap-admin", "--login", ADMIN_LOGIN, "--email", "testadmin@example.test",
+            "--firstname", "Test", "--lastname", "Admin", "--password-stdin",
             input_text=ADMIN_PASSWORD + "\n",
         )
 

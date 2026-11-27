@@ -33,13 +33,14 @@ func TestServiceIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		tokens, err := infrastructure.NewTokenManager(key, "lab2", "user-service", "inference-platform")
+		tokens, err := infrastructure.NewTokenManager(key, "test-key", "user-service", "inference-platform")
 		if err != nil {
 			t.Fatal(err)
 		}
 		repo := repository.NewUserRepository(pool)
 		svc := service.NewUserService(repo, infrastructure.NewPasswordHasher(1), tokens, infrastructure.IDGenerator{}, infrastructure.Clock{}, time.Minute)
-		registered, err := svc.Register(ctx, service.RegisterInput{Login: "lab2user", Email: "lab2@example.test", Firstname: "Lab", Lastname: "Two", Password: "lab2-password"})
+		const password = "integration-user-password"
+		registered, err := svc.Register(ctx, service.RegisterInput{Login: "integrationuser", Email: "integration@example.test", Firstname: "Integration", Lastname: "User", Password: password})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -57,10 +58,10 @@ func TestServiceIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if saved.ID != registered.ID || saved.Email != registered.Email || saved.PasswordHash == "lab2-password" {
+		if saved.ID != registered.ID || saved.Email != registered.Email || saved.PasswordHash == password {
 			t.Fatalf("incorrect saved user: %+v", saved)
 		}
-		token, err := svc.Login(ctx, service.LoginInput{Login: registered.Login, Password: "lab2-password"})
+		token, err := svc.Login(ctx, service.LoginInput{Login: registered.Login, Password: password})
 		if err != nil || token.Value == "" {
 			t.Fatalf("login: token=%+v error=%v", token, err)
 		}

@@ -11,8 +11,13 @@ import sys
 import time
 import uuid
 
-ROOT = Path(os.environ.get("LAB2_REPORT_ROOT", "/results"))
-HISTORY = Path(os.environ.get("LAB2_REPORT_HISTORY", "/history"))
+ROOT = Path(os.environ.get("TEST_REPORT_ROOT", "/results"))
+HISTORY = Path(os.environ.get("TEST_REPORT_HISTORY", "/history"))
+TEST_STAGES = ("unit", "integration", "e2e")
+
+
+def selected_stages(mode):
+    return TEST_STAGES if mode == "full" else (mode,)
 
 
 def read_object(path):
@@ -41,13 +46,13 @@ def event(name, status, message="", *, root=ROOT):
 
 def result(out, name, status, message="", start=None, stop=None, full_name=None):
     identifier = str(uuid.uuid4())
-    full = full_name or "lab2/" + name
+    full = full_name or "test-pipeline/" + name
     now = int(time.time() * 1000)
     data = dict(uuid=identifier, name=name, fullName=full,
                 historyId=hashlib.md5(full.encode()).hexdigest(),
                 status=status, stage="finished", start=start or now, stop=stop or now,
                 statusDetails={"message": message},
-                labels=[{"name": "suite", "value": "Lab 2"}])
+                labels=[{"name": "suite", "value": "Test pipeline"}])
     (out / f"{identifier}-result.json").write_text(json.dumps(data))
 
 
@@ -70,7 +75,7 @@ def generate():
         shutil.rmtree(out)
     out.mkdir()
     stages = {}
-    for name in ("setup", "unit", "integration", "e2e", "cleanup"):
+    for name in ("setup", *selected_stages(os.environ.get("TEST_MODE", "full")), "cleanup"):
         path = ROOT / "stages" / f"{name}.json"
         try:
             state = read_object(path) if path.exists() else dict(
@@ -84,6 +89,8 @@ def generate():
         stages[name] = state
     integration_seen = set()
     for stage in ("unit", "integration"):
+        if stage not in stages:
+            continue
         for module in ("user-service", "model-service", "inference-service"):
             source = ROOT / stage / module / "allure-results"
             for path in source.glob("*"):
@@ -119,9 +126,11 @@ def generate():
                     (out / path.name).write_text(json.dumps(data))
                 else:
                     shutil.copy2(path, out / path.name)
-    for module in ("user-service", "model-service", "inference-service"):
-        if module not in integration_seen:
-            state = stages["integration"]
+    if "integration" in stages:
+        state = stages["integration"]
+        for module in ("user-service", "model-service", "inference-service"):
+            if module in integration_seen:
+                continue
             log = ROOT / "integration" / f"{module}.json"
             events = read_events(log)
             started = any(e.get("Test") == "TestServiceIntegration" and e.get("Action") == "run" for e in events)
@@ -132,11 +141,9 @@ def generate():
                 state.update(status="broken", message=f"missing native integration result for {module}")
             result(out, "TestServiceIntegration", status, state.get("message", "no completed Go test result"),
                    full_name=module + "/internal/service/integration_test.go/TestServiceIntegration")
-    for name in ("setup", "unit", "integration", "e2e", "cleanup"):
-        state = stages[name]
+    for name, state in stages.items():
         result(out, name if name != "e2e" else "E2E model lifecycle",
-               state["status"], state.get("message", ""), state.get("start"), state.get("stop"),
-               full_name="lab2/E2E model lifecycle (curl + tcpdump)" if name == "e2e" else None)
+               state["status"], state.get("message", ""), state.get("start"), state.get("stop"))
     (ROOT / "summary.json").write_text(json.dumps(stages, indent=2))
     HISTORY.mkdir(parents=True, exist_ok=True)
     # Concurrent runs merge no raw results and serialize history replacement.

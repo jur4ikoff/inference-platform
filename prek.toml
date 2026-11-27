@@ -5,7 +5,7 @@ default_stages = ["manual"]
 repo = "builtin"
 hooks = [
     { id = "trailing-whitespace", args = ["--markdown-linebreak-ext=md"] },
-    { id = "end-of-file-fixer" },
+    { id = "end-of-file-fixer", exclude = '^nginx/static/(swagger|vendor)/' },
     { id = "check-merge-conflict" },
     { id = "check-yaml" },
     { id = "check-toml" },

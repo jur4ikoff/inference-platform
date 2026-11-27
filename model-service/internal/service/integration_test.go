@@ -27,8 +27,9 @@ func TestServiceIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer pool.Close()
+		const modelRepo = "integration/fixture"
 		svc := service.NewModelService(repository.NewModelRepository(pool), nil)
-		created, err := svc.Create(ctx, service.CreateModelInput{Name: "lab2-model", Username: "labadmin", Project: "lab2-integration", Spec: domain.ModelSpec{ProviderType: domain.ProviderHuggingFace, ProviderHuggingFace: &domain.HuggingFaceProvider{Repo: "lab2/fixture"}}})
+		created, err := svc.Create(ctx, service.CreateModelInput{Name: "integration-model", Username: "testadmin", Project: "integration-project", Spec: domain.ModelSpec{ProviderType: domain.ProviderHuggingFace, ProviderHuggingFace: &domain.HuggingFaceProvider{Repo: modelRepo}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -43,7 +44,7 @@ func TestServiceIntegration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if saved.ID == "" || saved.ID != created.ID || saved.Project != created.Project || saved.Name != created.Name || saved.Spec.ProviderHuggingFace.Repo != "lab2/fixture" {
+		if saved.ID == "" || saved.ID != created.ID || saved.Project != created.Project || saved.Name != created.Name || saved.Spec.ProviderHuggingFace.Repo != modelRepo {
 			t.Fatalf("incorrect saved model: %+v", saved)
 		}
 	})

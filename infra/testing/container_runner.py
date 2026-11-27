@@ -8,7 +8,7 @@ import subprocess
 import time
 from urllib.request import urlopen
 
-from pipeline_report import event, generate
+from pipeline_report import event, generate, selected_stages
 from prepare_test_database import RESULTS, prepare_database
 from e2e.test_model_lifecycle import run_e2e
 
@@ -50,17 +50,14 @@ def interrupt(signum, _frame):
 def run_pipeline():
     signal.signal(signal.SIGINT, interrupt)
     signal.signal(signal.SIGTERM, interrupt)
-    shutil.copyfile("/usr/local/share/lab2-snapshot-revision", RESULTS / "snapshot-revision.txt")
-    mode = os.environ.get("LAB2_MODE", "full")
-    injected_failure = os.environ.get("LAB2_FAIL_STAGE", "")
+    shutil.copyfile("/usr/local/share/test-snapshot-revision", RESULTS / "snapshot-revision.txt")
+    mode = os.environ.get("TEST_MODE", "full")
+    injected_failure = os.environ.get("TEST_FAIL_STAGE", "")
 
-    for stage in ("unit", "integration", "e2e"):
-        if mode == "integration" and stage != "integration":
-            event(stage, "skipped", "integration-only invocation")
-            continue
+    for stage in selected_stages(mode):
         event(stage, "running")
         try:
-            if stage == "integration" and os.environ.get("LAB2_PAUSE_STAGE") == stage:
+            if stage == "integration" and os.environ.get("TEST_PAUSE_STAGE") == stage:
                 (RESULTS / "pause-ready").touch()
                 time.sleep(300)
             status = run_e2e() if stage == "e2e" else run_go_tests(stage)
